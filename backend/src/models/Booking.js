@@ -1,77 +1,42 @@
-import mongoose from "mongoose";
+const mongoose = require('mongoose');
+const { Schema } = mongoose;
 
-const bookingSchema = new mongoose.Schema(
+const bookingSchema = new Schema(
   {
-    bookingCode: {
-      type: String,
-      unique: true,
-    },
+    // the shared/bookable Asset (room, vehicle, equipment) being reserved
+    resource: { type: Schema.Types.ObjectId, ref: 'Asset', required: true, index: true },
 
-    asset: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Asset",
-      required: true,
-    },
+    bookedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    bookedForDepartment: { type: Schema.Types.ObjectId, ref: 'Department', default: null },
 
-    bookedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-    },
+    purpose: { type: String, trim: true, default: '' },
 
-    title: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-
-    purpose: {
-      type: String,
-      default: "",
-    },
-
-    startDateTime: {
-      type: Date,
-      required: true,
-    },
-
-    endDateTime: {
-      type: Date,
-      required: true,
-    },
+    startTime: { type: Date, required: true },
+    endTime: { type: Date, required: true },
 
     status: {
       type: String,
-      enum: [
-        "UPCOMING",
-        "ONGOING",
-        "COMPLETED",
-        "CANCELLED",
-      ],
-      default: "UPCOMING",
+      enum: ['Upcoming', 'Ongoing', 'Completed', 'Cancelled'],
+      default: 'Upcoming',
+      index: true,
     },
+
+    cancelledBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    cancelReason: { type: String, trim: true, default: null },
+
+    reminderSent: { type: Boolean, default: false },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-bookingSchema.pre("save", async function () {
+// speeds up overlap queries: find bookings for a resource intersecting a range
+bookingSchema.index({ resource: 1, startTime: 1, endTime: 1 });
 
-    if (!this.isNew || this.bookingCode) return;
-
-    const last = await mongoose.model("Booking")
-        .findOne()
-        .sort({ createdAt: -1 });
-
-    let number = 1;
-
-    if (last?.bookingCode) {
-        number = parseInt(last.bookingCode.replace("BK", "")) + 1;
-    }
-
-    this.bookingCode = `BK${String(number).padStart(6, "0")}`;
-
+bookingSchema.pre('validate', function preValidate(next) {
+  if (this.startTime && this.endTime && this.startTime >= this.endTime) {
+    return next(new Error('startTime must be before endTime'));
+  }
+  return next();
 });
 
-export default mongoose.model("Booking", bookingSchema);
+module.exports = mongoose.model('Booking', bookingSchema);
