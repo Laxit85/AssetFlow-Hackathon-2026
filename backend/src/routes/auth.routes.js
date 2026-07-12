@@ -20,12 +20,18 @@ const validate = (req, res, next) => {
 };
 
 const registerValidation = [
-  body("name")
+  body("firstName")
     .trim()
     .notEmpty()
-    .withMessage("Name is required")
+    .withMessage("First name is required")
     .isLength({ min: 2, max: 50 })
-    .withMessage("Name must be between 2 and 50 characters"),
+    .withMessage("First name must be between 2 and 50 characters"),
+  body("lastName")
+    .trim()
+    .notEmpty()
+    .withMessage("Last name is required")
+    .isLength({ min: 2, max: 50 })
+    .withMessage("Last name must be between 2 and 50 characters"),
   body("email")
     .trim()
     .notEmpty()
@@ -40,13 +46,19 @@ const registerValidation = [
     .withMessage("Password must be at least 6 characters long"),
   body("role")
     .optional()
-    .isIn(["admin", "asset_manager", "department_head", "employee"])
+    .toUpperCase()
+    .isIn(["ADMIN", "ASSET_MANAGER", "DEPARTMENT_HEAD", "EMPLOYEE"])
     .withMessage("Invalid role name"),
   body("department")
     .optional()
-    .trim()
-    .notEmpty()
-    .withMessage("Department cannot be empty if provided"),
+    .isMongoId()
+    .withMessage("Department must be a valid MongoDB ID"),
+  body("phone")
+    .optional()
+    .trim(),
+  body("designation")
+    .optional()
+    .trim(),
   validate
 ];
 

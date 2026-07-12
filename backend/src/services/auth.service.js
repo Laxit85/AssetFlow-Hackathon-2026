@@ -7,7 +7,7 @@ import { generateToken } from "../utils/jwt.js";
  * @returns {promise<object>} Created user details without password.
  */
 export const registerUser = async (userData) => {
-  const { name, email, password, role, department, profileImage } = userData;
+  const { firstName, lastName, email, password, role, department, phone, designation } = userData;
 
   // Check if user already exists
   const existingUser = await User.findOne({ email });
@@ -19,12 +19,14 @@ export const registerUser = async (userData) => {
 
   // Create user
   const user = await User.create({
-    name,
+    firstName,
+    lastName,
     email,
     password,
-    role,
-    department,
-    profileImage,
+    role: role ? role.toUpperCase() : "EMPLOYEE",
+    department: department || null,
+    phone,
+    designation
   });
 
   // Convert mongoose document to plain JS object and strip password
@@ -57,7 +59,7 @@ export const loginUser = async (email, password) => {
     throw error;
   }
 
-  if (user.status !== "active") {
+  if (user.status !== "ACTIVE") {
     const error = new Error("Account is inactive. Please contact support.");
     error.statusCode = 403;
     throw error;

@@ -38,7 +38,7 @@ export const protect = async (req, res, next) => {
       });
     }
 
-    if (user.status !== "active") {
+    if (user.status !== "ACTIVE") {
       return res.status(403).json({
         success: false,
         message: "Account is inactive",

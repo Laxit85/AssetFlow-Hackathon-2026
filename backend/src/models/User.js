@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import bcrypt from "bcryptjs";
 
 const userSchema = new mongoose.Schema(
   {
@@ -76,24 +77,42 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-userSchema.pre("save", async function () {
-
-    if (!this.isNew || this.employeeCode) return;
-
-    const lastUser = await mongoose
+// Pre-save hook: generate employeeCode if new, and hash password if modified
+userSchema.pre("save", async function (next) {
+  // 1. Generate employeeCode
+  if (this.isNew && !this.employeeCode) {
+    try {
+      const lastUser = await mongoose
         .model("User")
         .findOne()
         .sort({ createdAt: -1 });
 
-    let nextNumber = 1;
-
-    if (lastUser?.employeeCode) {
-        nextNumber =
-            parseInt(lastUser.employeeCode.replace("EMP", "")) + 1;
+      let nextNumber = 1;
+      if (lastUser?.employeeCode) {
+        nextNumber = parseInt(lastUser.employeeCode.replace("EMP", "")) + 1;
+      }
+      this.employeeCode = `EMP${String(nextNumber).padStart(3, "0")}`;
+    } catch (err) {
+      return next(err);
     }
+  }
 
-    this.employeeCode = `EMP${String(nextNumber).padStart(3, "0")}`;
-
+  // 2. Hash password
+  if (!this.isModified("password")) {
+    return next();
+  }
+  try {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+    next();
+  } catch (err) {
+    next(err);
+  }
 });
+
+// Compare password method
+userSchema.methods.comparePassword = async function (enteredPassword) {
+  return await bcrypt.compare(enteredPassword, this.password);
+};
 
 export default mongoose.model("User", userSchema);
