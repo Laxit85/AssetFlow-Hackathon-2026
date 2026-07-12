@@ -1,82 +1,99 @@
 import mongoose from "mongoose";
-import bcrypt from "bcryptjs";
 
 const userSchema = new mongoose.Schema(
   {
-    name: {
+    employeeCode: {
       type: String,
-      required: [true, "Name is required"],
-      trim: true,
-      minlength: [2, "Name must be at least 2 characters"],
-      maxlength: [50, "Name cannot exceed 50 characters"]
+      unique: true,
     },
+
+    firstName: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 50,
+    },
+
+    lastName: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 50,
+    },
+
     email: {
       type: String,
-      required: [true, "Email is required"],
+      required: true,
       unique: true,
-      trim: true,
       lowercase: true,
-      match: [
-        /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
-        "Please enter a valid email address"
-      ]
+      trim: true,
     },
+
     password: {
       type: String,
-      required: [true, "Password is required"],
-      minlength: [6, "Password must be at least 6 characters"],
-      select: false
+      required: true,
+      minlength: 6,
+      select: false,
     },
-    role: {
-      type: String,
-      enum: {
-        values: ["admin", "asset_manager", "department_head", "employee"],
-        message: "{VALUE} is not a valid role"
-      },
-      default: "employee"
-    },
-    department: {
+
+    phone: {
       type: String,
       trim: true,
-      default: ""
+      default: "",
     },
+
+    role: {
+      type: String,
+      enum: [
+        "ADMIN",
+        "ASSET_MANAGER",
+        "DEPARTMENT_HEAD",
+        "EMPLOYEE",
+      ],
+      default: "EMPLOYEE",
+    },
+
+    department: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Department",
+      default: null,
+    },
+
+    designation: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
     status: {
       type: String,
-      enum: {
-        values: ["active", "inactive"],
-        message: "{VALUE} is not a valid status"
-      },
-      default: "active"
+      enum: ["ACTIVE", "INACTIVE"],
+      default: "ACTIVE",
     },
-    profileImage: {
-      type: String,
-      default: ""
-    }
   },
   {
-    timestamps: true
+    timestamps: true,
   }
 );
 
-// Hash password before saving
-userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) {
-    return next();
-  }
-  try {
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (err) {
-    next(err);
-  }
+userSchema.pre("save", async function () {
+
+    if (!this.isNew || this.employeeCode) return;
+
+    const lastUser = await mongoose
+        .model("User")
+        .findOne()
+        .sort({ createdAt: -1 });
+
+    let nextNumber = 1;
+
+    if (lastUser?.employeeCode) {
+        nextNumber =
+            parseInt(lastUser.employeeCode.replace("EMP", "")) + 1;
+    }
+
+    this.employeeCode = `EMP${String(nextNumber).padStart(3, "0")}`;
+
 });
 
-// Compare password method
-userSchema.methods.comparePassword = async function (enteredPassword) {
-  return await bcrypt.compare(enteredPassword, this.password);
-};
-
-const User = mongoose.model("User", userSchema);
-
-export default User;
+export default mongoose.model("User", userSchema);
