@@ -9,7 +9,9 @@ import { logger } from "./utils/logger.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import authRoutes from "./routes/auth.routes.js";
 import dashboardRoutes from "./routes/dashboard.routes.js";
+import maintenanceRoutes from "./routes/maintenance.routes.js";
 
+app.use("/api/maintenance", maintenanceRoutes);
 // Future Route Imports
 // import assetRoutes from "./routes/asset.routes.js";
 // import bookingRoutes from "./routes/booking.routes.js";
