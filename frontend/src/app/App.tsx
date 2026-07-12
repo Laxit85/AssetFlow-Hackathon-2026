@@ -438,9 +438,9 @@ function LoginPage({ onLogin }: { onLogin: (name: string, email: string) => void
 
         {/* Floating stat cards */}
         {[
-          { top: "18%", left: "10%", label: "Total Assets", value: "2,847", icon: Package },
-          { top: "36%", left: "55%", label: "Active Staff", value: "318", icon: Users },
-          { top: "58%", left: "8%", label: "Departments", value: "14", icon: Building2 },
+          { top: "12%", left: "15%", label: "Total Assets", value: "2,847", icon: Package },
+          { top: "26%", left: "55%", label: "Active Staff", value: "318", icon: Users },
+          { top: "42%", left: "18%", label: "Departments", value: "14", icon: Building2 },
         ].map((card, i) => (
           <motion.div
             key={i}
