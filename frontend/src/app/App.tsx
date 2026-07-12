@@ -365,7 +365,8 @@ function Preloader({ onDone }: { onDone: () => void }) {
 
 // ─── Login Page ────────────────────────────────────────────────────────────────
 
-function LoginPage({ onLogin }: { onLogin: () => void }) {
+function LoginPage({ onLogin }: { onLogin: (name: string, email: string) => void }) {
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPwd, setShowPwd] = useState(false);
@@ -375,7 +376,7 @@ function LoginPage({ onLogin }: { onLogin: () => void }) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setTimeout(onLogin, 1200);
+    setTimeout(() => onLogin(name, email), 1200);
   };
 
   return (
@@ -478,6 +479,35 @@ function LoginPage({ onLogin }: { onLogin: () => void }) {
           </div>
 
           <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            {/* Full Name */}
+            <div style={{ position: "relative" }}>
+              <label style={{
+                position: "absolute", left: 14,
+                top: focused === "name" || name ? "8px" : "50%",
+                transform: focused === "name" || name ? "none" : "translateY(-50%)",
+                fontSize: focused === "name" || name ? "0.65rem" : "0.85rem",
+                color: focused === "name" ? GOLD : TEXT_SECONDARY,
+                transition: "all 0.2s",
+                pointerEvents: "none",
+                fontFamily: fontBody,
+                letterSpacing: "0.04em",
+              }}>Full name</label>
+              <input
+                type="text"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                onFocus={() => setFocused("name")}
+                onBlur={() => setFocused(null)}
+                style={{
+                  width: "100%", padding: name || focused === "name" ? "24px 14px 10px" : "18px 14px",
+                  background: ELEVATED, border: `1px solid ${focused === "name" ? GOLD + "60" : BORDER}`,
+                  color: TEXT_PRIMARY, fontFamily: fontBody, fontSize: "0.9rem",
+                  outline: "none", transition: "border-color 0.2s",
+                  borderRadius: "6px",
+                }}
+              />
+            </div>
+
             {/* Email */}
             <div style={{ position: "relative" }}>
               <label style={{
@@ -767,13 +797,35 @@ function NavItem({ item, active, collapsed, onClick }: { item: { id: string; lab
 
 // ─── Topbar ────────────────────────────────────────────────────────────────────
 
-function Topbar({ currentPage, onNavigate }: { currentPage: Page; onNavigate: (p: Page) => void }) {
+function Topbar({ currentPage, onNavigate, onLogout, user }: { currentPage: Page; onNavigate: (p: Page) => void; onLogout: () => void; user: { name: string; email: string } }) {
   const [time, setTime] = useState(new Date());
   const [searchOpen, setSearchOpen] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showNotificationsMenu, setShowNotificationsMenu] = useState(false);
+
+  const profileRef = useRef<HTMLDivElement>(null);
+  const notificationsRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
+        setShowProfileMenu(false);
+      }
+      if (notificationsRef.current && !notificationsRef.current.contains(event.target as Node)) {
+        setShowNotificationsMenu(false);
+      }
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+        setSearchOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   const label = navGroups.flatMap(g => g.items).find(i => i.id === currentPage)?.label || "Dashboard";
@@ -799,18 +851,195 @@ function Topbar({ currentPage, onNavigate }: { currentPage: Page; onNavigate: (p
 
       {/* Actions */}
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-        <IconButton onClick={() => setSearchOpen(!searchOpen)} icon={Search} />
-        <IconButton onClick={() => onNavigate("notifications")} icon={Bell} badge={3} />
+        {/* Search Bar */}
+        <div ref={searchRef} style={{ display: "flex", alignItems: "center", position: "relative" }}>
+          <AnimatePresence>
+            {searchOpen && (
+              <motion.div
+                initial={{ width: 0, opacity: 0 }}
+                animate={{ width: 200, opacity: 1 }}
+                exit={{ width: 0, opacity: 0 }}
+                transition={{ duration: 0.25, ease: "easeInOut" }}
+                style={{ overflow: "hidden", marginRight: 8 }}
+              >
+                <input
+                  type="text"
+                  placeholder="Search workspace..."
+                  autoFocus
+                  style={{
+                    width: 200,
+                    background: ELEVATED,
+                    border: `1px solid ${BORDER}`,
+                    borderRadius: "6px",
+                    color: TEXT_PRIMARY,
+                    fontFamily: fontBody,
+                    fontSize: "0.83rem",
+                    padding: "8px 12px",
+                    outline: "none",
+                    transition: "border-color 0.2s",
+                  }}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+          <IconButton onClick={() => setSearchOpen(!searchOpen)} icon={Search} />
+        </div>
+        
+        {/* Notifications Icon & Popover */}
+        <div ref={notificationsRef} style={{ position: "relative" }}>
+          <IconButton 
+            onClick={() => {
+              setShowNotificationsMenu(!showNotificationsMenu);
+              setShowProfileMenu(false);
+            }} 
+            icon={Bell} 
+            badge={3} 
+          />
+          <AnimatePresence>
+            {showNotificationsMenu && (
+              <motion.div
+                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                transition={{ duration: 0.15 }}
+                style={{
+                  position: "absolute",
+                  right: 0,
+                  top: "100%",
+                  marginTop: 8,
+                  width: 320,
+                  background: CARD,
+                  border: `1px solid ${BORDER}`,
+                  boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
+                  zIndex: 100,
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
+                <div style={{ padding: "12px 16px", borderBottom: `1px solid ${BORDER}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontFamily: fontHeading, fontWeight: 600, fontSize: "0.85rem", color: TEXT_PRIMARY }}>Notifications</span>
+                  <button 
+                    onClick={() => {
+                      setShowNotificationsMenu(false);
+                      onNavigate("notifications");
+                    }} 
+                    style={{ background: "none", border: "none", cursor: "pointer", color: GOLD, fontSize: "0.75rem", fontFamily: fontBody }}
+                  >
+                    View All
+                  </button>
+                </div>
+                <div style={{ maxHeight: 260, overflowY: "auto" }}>
+                  {mockNotifications.slice(0, 3).map((notif) => (
+                    <NotificationDropdownItem 
+                      key={notif.id}
+                      notif={notif}
+                      onClick={() => {
+                        setShowNotificationsMenu(false);
+                        onNavigate("notifications");
+                      }}
+                    />
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
         <IconButton onClick={() => {}} icon={Settings} />
 
-        {/* Avatar */}
-        <div style={{ marginLeft: 8, display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-          <div style={{
-            width: 32, height: 32, background: `${GOLD}20`, border: `1px solid ${GOLD}40`,
-            display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%",
-          }}>
-            <span style={{ fontFamily: fontMono, fontSize: "0.7rem", color: GOLD }}>JW</span>
+        {/* Avatar & Profile Dropdown */}
+        <div ref={profileRef} style={{ position: "relative", marginLeft: 8 }}>
+          <div 
+            onClick={() => {
+              setShowProfileMenu(!showProfileMenu);
+              setShowNotificationsMenu(false);
+            }} 
+            style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}
+          >
+            <div style={{
+              width: 32, height: 32, background: `${GOLD}20`, border: `1px solid ${GOLD}40`,
+              display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "50%",
+              transition: "border-color 0.2s",
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.borderColor = GOLD}
+            onMouseLeave={(e) => e.currentTarget.style.borderColor = `${GOLD}40`}
+            >
+              <span style={{ fontFamily: fontMono, fontSize: "0.7rem", color: GOLD }}>
+                {user.name.trim().split(/\s+/).map(n => n[0]).join("").substring(0, 2).toUpperCase() || "U"}
+              </span>
+            </div>
           </div>
+          
+          <AnimatePresence>
+            {showProfileMenu && (
+              <motion.div
+                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                transition={{ duration: 0.15 }}
+                style={{
+                  position: "absolute",
+                  right: 0,
+                  top: "100%",
+                  marginTop: 8,
+                  width: 240,
+                  background: CARD,
+                  border: `1px solid ${BORDER}`,
+                  boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
+                  zIndex: 100,
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
+                <div style={{ padding: "16px", borderBottom: `1px solid ${BORDER}` }}>
+                  <div style={{ fontSize: "0.85rem", fontWeight: 600, color: TEXT_PRIMARY }}>{user.name}</div>
+                  <div style={{ fontSize: "0.75rem", color: TEXT_SECONDARY, marginTop: 2 }}>{user.email}</div>
+                  <div style={{ 
+                    marginTop: 6, 
+                    display: "inline-block", 
+                    fontSize: "0.65rem", 
+                    color: GOLD, 
+                    background: `${GOLD}12`, 
+                    padding: "2px 6px", 
+                    fontFamily: fontMono,
+                    border: `1px solid ${GOLD}33`
+                  }}>
+                    Senior Admin
+                  </div>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  <DropdownItem 
+                    icon={User} 
+                    onClick={() => {
+                      setShowProfileMenu(false);
+                      onNavigate("employees");
+                    }}
+                  >
+                    My Profile
+                  </DropdownItem>
+                  <DropdownItem 
+                    icon={Settings} 
+                    onClick={() => {
+                      setShowProfileMenu(false);
+                    }}
+                  >
+                    Account Settings
+                  </DropdownItem>
+                  <div style={{ height: 1, background: BORDER }} />
+                  <DropdownItem 
+                    icon={LogOut} 
+                    danger 
+                    onClick={() => {
+                      setShowProfileMenu(false);
+                      onLogout();
+                    }}
+                  >
+                    Sign Out
+                  </DropdownItem>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
     </div>
@@ -841,6 +1070,89 @@ function IconButton({ icon: Icon, onClick, badge }: { icon: any; onClick: () => 
         }} />
       )}
     </button>
+  );
+}
+
+function DropdownItem({
+  icon: Icon,
+  children,
+  onClick,
+  danger = false
+}: {
+  icon: any;
+  children: React.ReactNode;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        background: hovered ? (danger ? `${DANGER}20` : `${GOLD}10`) : "transparent",
+        border: "none",
+        cursor: "pointer",
+        padding: "10px 16px",
+        color: danger ? (hovered ? "#ff6b6b" : DANGER) : (hovered ? GOLD : TEXT_SECONDARY),
+        textAlign: "left",
+        fontSize: "0.82rem",
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        transition: "all 0.15s ease",
+        fontFamily: fontBody,
+        width: "100%",
+      }}
+    >
+      <Icon size={14} />
+      {children}
+    </button>
+  );
+}
+
+function NotificationDropdownItem({
+  notif,
+  onClick
+}: {
+  notif: typeof mockNotifications[0];
+  onClick: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const color = notif.type === "success" ? SUCCESS : notif.type === "warning" ? WARNING : notif.type === "danger" ? DANGER : GOLD;
+  return (
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        padding: "12px 16px",
+        borderBottom: `1px solid ${BORDER}`,
+        cursor: "pointer",
+        background: hovered ? `${GOLD}06` : "transparent",
+        transition: "background 0.15s ease",
+      }}
+    >
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+        <div style={{
+          width: 24, height: 24, borderRadius: "50%",
+          background: `${color}15`, display: "flex", alignItems: "center", justifyContent: "center",
+          color: color, flexShrink: 0, marginTop: 2,
+          border: `1px solid ${color}22`
+        }}>
+          {notif.type === "success" ? <Check size={12} /> : notif.type === "warning" ? <AlertTriangle size={12} /> : <AlertCircle size={12} />}
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: "0.8rem", fontWeight: notif.read ? 400 : 600, color: TEXT_PRIMARY }}>{notif.title}</div>
+          <div style={{ fontSize: "0.75rem", color: TEXT_SECONDARY, marginTop: 2, lineHeight: 1.4 }}>{notif.message}</div>
+          <div style={{ fontSize: "0.65rem", color: TEXT_SECONDARY, marginTop: 4, fontFamily: fontMono }}>{notif.time}</div>
+        </div>
+        {!notif.read && (
+          <div style={{ width: 6, height: 6, borderRadius: "50%", background: GOLD, marginTop: 8, flexShrink: 0 }} />
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -1111,8 +1423,6 @@ function AssetsPage() {
           subtitle={`${mockAssets.length} total assets across all departments`}
           actions={
             <>
-              <GoldButton variant="outline" small><Upload size={13} /> Import</GoldButton>
-              <GoldButton variant="outline" small><Download size={13} /> Export</GoldButton>
               <GoldButton small><Plus size={13} /> Add Asset</GoldButton>
             </>
           }
@@ -1522,12 +1832,6 @@ function ReportsPage() {
         <PageHeader
           title="Reports & Analytics"
           subtitle="Enterprise asset intelligence"
-          actions={
-            <>
-              <GoldButton variant="outline" small><Download size={13} /> Export PDF</GoldButton>
-              <GoldButton variant="outline" small><Download size={13} /> Export CSV</GoldButton>
-            </>
-          }
         />
 
         {/* KPI Row */}
@@ -1651,7 +1955,6 @@ function ActivityLogsPage() {
           actions={
             <>
               <GoldButton variant="outline" small><Filter size={13} /> Filter</GoldButton>
-              <GoldButton variant="outline" small><Download size={13} /> Export</GoldButton>
             </>
           }
         />
@@ -1697,7 +2000,7 @@ function ActivityLogsPage() {
 
 // ─── App Shell ─────────────────────────────────────────────────────────────────
 
-function AppShell() {
+function AppShell({ onLogout, user }: { onLogout: () => void; user: { name: string; email: string } }) {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
@@ -1727,7 +2030,7 @@ function AppShell() {
     <div style={{ display: "flex", minHeight: "100vh", background: BG, fontFamily: fontBody }}>
       <Sidebar current={currentPage} onNavigate={setCurrentPage} collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} />
       <div style={{ flex: 1, marginLeft: sidebarWidth, transition: "margin-left 0.35s cubic-bezier(0.4, 0, 0.2, 1)", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-        <Topbar currentPage={currentPage} onNavigate={setCurrentPage} />
+        <Topbar currentPage={currentPage} onNavigate={setCurrentPage} onLogout={onLogout} user={user} />
         <main style={{ flex: 1 }}>
           {renderPage()}
         </main>
@@ -1742,6 +2045,7 @@ type AppState = "loading" | "login" | "app";
 
 export default function App() {
   const [state, setState] = useState<AppState>("loading");
+  const [user, setUser] = useState({ name: "James Whitmore", email: "admin@corp.io" });
 
   return (
     <>
@@ -1764,12 +2068,18 @@ export default function App() {
         )}
         {state === "login" && (
           <motion.div key="login" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, filter: "blur(8px)", scale: 0.98 }} transition={{ duration: 0.5 }}>
-            <LoginPage onLogin={() => setState("app")} />
+            <LoginPage onLogin={(name, email) => {
+              setUser({
+                name: name.trim() || "James Whitmore",
+                email: email.trim() || "admin@corp.io"
+              });
+              setState("app");
+            }} />
           </motion.div>
         )}
         {state === "app" && (
           <motion.div key="app" initial={{ opacity: 0, filter: "blur(8px)" }} animate={{ opacity: 1, filter: "blur(0px)" }} transition={{ duration: 0.6 }} style={{ width: "100%" }}>
-            <AppShell />
+            <AppShell user={user} onLogout={() => setState("login")} />
           </motion.div>
         )}
       </AnimatePresence>
