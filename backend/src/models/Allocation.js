@@ -1,4 +1,5 @@
-const mongoose = require('mongoose');
+import mongoose from "mongoose";
+
 const { Schema } = mongoose;
 
 /**
@@ -71,4 +72,5 @@ allocationSchema.pre('validate', function preValidate(next) {
   return next();
 });
 
-module.exports = mongoose.model('Allocation', allocationSchema);
+export default mongoose.model('Allocation', allocationSchema);
+export { transferRequestSchema };

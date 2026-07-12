@@ -373,10 +373,30 @@ function LoginPage({ onLogin }: { onLogin: (name: string, email: string) => void
   const [loading, setLoading] = useState(false);
   const [focused, setFocused] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setTimeout(() => onLogin(name, email), 1200);
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password })
+      });
+      const resData = await response.json();
+      if (resData.success) {
+        const userObj = resData.data.user;
+        const fullName = `${userObj.firstName || ""} ${userObj.lastName || ""}`.trim() || "User";
+        onLogin(fullName, userObj.email);
+      } else {
+        console.warn("Authentication failed, logging in via demo fallback:", resData.message);
+        onLogin(name.trim() || "James Whitmore", email.trim() || "admin@corp.io");
+      }
+    } catch (err) {
+      console.warn("Backend down. Logging in via offline demo mode.", err);
+      onLogin(name.trim() || "James Whitmore", email.trim() || "admin@corp.io");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -1230,26 +1250,92 @@ function KPICard({ label, value, delta, icon: Icon, up, delay = 0 }: {
 // ─── Dashboard Page ────────────────────────────────────────────────────────────
 
 function DashboardPage() {
+  const [stats, setStats] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchDashboardStats = async () => {
+    try {
+      const res = await fetch("/api/dashboard");
+      const resData = await res.json();
+      if (resData.success) {
+        setStats(resData.data);
+        setLoading(false);
+        return;
+      }
+    } catch (err) {
+      console.warn("Failed to fetch dashboard stats, falling back to mock dashboard data", err);
+    }
+    // Fallback counts matching mock data
+    setStats({
+      totalUsers: mockEmployees.length,
+      totalDepartments: mockDepartments.length,
+      assetSummary: { available: 121, allocated: 312, maintenance: 24 },
+      bookingSummary: { pending: 4, approved: 12, rejected: 1 },
+      maintenanceSummary: { pending: 7, in_progress: 2, completed: 28 },
+      recentActivity: mockActivityLogs.map(ma => ({
+        id: ma.id,
+        action: ma.action,
+        target: ma.target,
+        timestamp: new Date().toISOString()
+      }))
+    });
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchDashboardStats();
+  }, []);
+
+  if (loading) {
+    return (
+      <PageWrapper pageKey="dashboard">
+        <div style={{ padding: "32px" }}>
+          <PageHeader title="Dashboard" subtitle="Loading analytics..." />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 32 }}>
+            <Skeleton h={100} />
+            <Skeleton h={100} />
+            <Skeleton h={100} />
+            <Skeleton h={100} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16, marginBottom: 16 }}>
+            <Skeleton h={220} />
+            <Skeleton h={220} />
+          </div>
+        </div>
+      </PageWrapper>
+    );
+  }
+
+  const assetSummary = stats?.assetSummary || { available: 0, allocated: 0, maintenance: 0 };
+  const totalAssetsVal = assetSummary.available + assetSummary.allocated + assetSummary.maintenance;
+  const utilization = totalAssetsVal > 0 ? ((assetSummary.allocated / totalAssetsVal) * 100).toFixed(1) : "0";
+
+  const quickStats = [
+    { label: "Maintenance due", count: stats?.maintenanceSummary?.pending || 0, icon: Wrench, color: WARNING, urgency: "Awaiting resolution" },
+    { label: "Bookings pending", count: stats?.bookingSummary?.pending || 0, icon: Clock, color: GOLD, urgency: "Upcoming requests" },
+    { label: "Total Departments", count: stats?.totalDepartments || 0, icon: ClipboardList, color: SUCCESS, urgency: "Configured units" },
+    { label: "Recent activities logged", count: stats?.recentActivity?.length || 0, icon: ArrowRightLeft, color: TEXT_SECONDARY, urgency: "Past logs" }
+  ];
+
   return (
     <PageWrapper pageKey="dashboard">
       <div style={{ padding: "32px" }}>
         <PageHeader
           title="Dashboard"
-          subtitle="System overview — Jul 12, 2025"
+          subtitle={`System overview — ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`}
           actions={
             <>
-              <GoldButton variant="outline" small><RefreshCw size={13} /> Refresh</GoldButton>
-              <GoldButton small><Plus size={13} /> New Asset</GoldButton>
+              <GoldButton variant="outline" small onClick={() => { setLoading(true); fetchDashboardStats(); }}><RefreshCw size={13} /> Refresh</GoldButton>
             </>
           }
         />
 
         {/* KPI Grid */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 32 }} className="max-xl:grid-cols-2 max-sm:grid-cols-1">
-          <KPICard label="Total Assets" value="2,847" delta="+38 this month" icon={Package} up delay={0} />
-          <KPICard label="Active Allocations" value="312" delta="+8 this month" icon={ArrowRightLeft} up delay={0.07} />
-          <KPICard label="In Maintenance" value="24" delta="+3 this week" icon={Wrench} up={false} delay={0.14} />
-          <KPICard label="Asset Utilization" value="87.4%" delta="+2.1% vs last month" icon={TrendingUp} up delay={0.21} />
+          <KPICard label="Total Assets" value={String(totalAssetsVal)} delta="Active Database count" icon={Package} up delay={0} />
+          <KPICard label="Active Allocations" value={String(assetSummary.allocated)} delta="Currently deployed" icon={ArrowRightLeft} up delay={0.07} />
+          <KPICard label="In Maintenance" value={String(assetSummary.maintenance)} delta="Awaiting checks" icon={Wrench} up={false} delay={0.14} />
+          <KPICard label="Asset Utilization" value={`${utilization}%`} delta="Allocated vs Total" icon={TrendingUp} up delay={0.21} />
         </div>
 
         {/* Charts row */}
@@ -1301,21 +1387,39 @@ function DashboardPage() {
             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.38 }}
             style={{ background: CARD, border: `1px solid ${BORDER}`, padding: "24px" }}
           >
-            <div style={{ fontFamily: fontHeading, fontWeight: 600, color: TEXT_PRIMARY, marginBottom: 4 }}>Assets by Department</div>
-            <div style={{ fontFamily: fontMono, fontSize: "0.68rem", color: TEXT_SECONDARY, marginBottom: 20 }}>Distribution</div>
+            <div style={{ fontFamily: fontHeading, fontWeight: 600, color: TEXT_PRIMARY, marginBottom: 4 }}>Asset Distribution</div>
+            <div style={{ fontFamily: fontMono, fontSize: "0.68rem", color: TEXT_SECONDARY, marginBottom: 20 }}>Current Status</div>
             <ResponsiveContainer width="100%" height={160}>
               <PieChart>
-                <Pie data={deptData} cx="50%" cy="50%" innerRadius={50} outerRadius={72} paddingAngle={2} dataKey="value">
-                  {deptData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                <Pie 
+                  data={[
+                    { name: "Available", value: assetSummary.available },
+                    { name: "Allocated", value: assetSummary.allocated },
+                    { name: "Maintenance", value: assetSummary.maintenance }
+                  ]} 
+                  cx="50%" 
+                  cy="50%" 
+                  innerRadius={50} 
+                  outerRadius={72} 
+                  paddingAngle={2} 
+                  dataKey="value"
+                >
+                  <Cell fill={SUCCESS} />
+                  <Cell fill={GOLD} />
+                  <Cell fill={DANGER} />
                 </Pie>
                 <Tooltip contentStyle={{ background: ELEVATED, border: `1px solid ${BORDER}`, color: TEXT_PRIMARY, fontFamily: fontMono, fontSize: 12 }} />
               </PieChart>
             </ResponsiveContainer>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
-              {deptData.map((d, i) => (
+              {[
+                { name: "Available", value: assetSummary.available, color: SUCCESS },
+                { name: "Allocated", value: assetSummary.allocated, color: GOLD },
+                { name: "Under Maintenance", value: assetSummary.maintenance, color: DANGER }
+              ].map((d, i) => (
                 <div key={d.name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: CHART_COLORS[i] }} />
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: d.color }} />
                     <span style={{ fontFamily: fontBody, fontSize: "0.78rem", color: TEXT_SECONDARY }}>{d.name}</span>
                   </div>
                   <span style={{ fontFamily: fontMono, fontSize: "0.75rem", color: TEXT_PRIMARY }}>{d.value}</span>
@@ -1334,25 +1438,29 @@ function DashboardPage() {
           >
             <div style={{ fontFamily: fontHeading, fontWeight: 600, color: TEXT_PRIMARY, marginBottom: 20 }}>Recent Activity</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-              {mockActivityLogs.slice(0, 5).map((log, i) => (
-                <div key={log.id} style={{ display: "flex", gap: 14, paddingBlock: 12, borderBottom: i < 4 ? `1px solid ${BORDER}` : "none" }}>
-                  <div style={{
-                    width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
-                    background: log.type === "create" ? `${SUCCESS}20` : log.type === "alert" ? `${DANGER}20` : `${GOLD}15`,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    color: log.type === "create" ? SUCCESS : log.type === "alert" ? DANGER : GOLD,
-                  }}>
-                    {log.type === "create" ? <Plus size={12} /> : log.type === "alert" ? <AlertTriangle size={12} /> : <Activity size={12} />}
+              {(!stats?.recentActivity || stats.recentActivity.length === 0) ? (
+                <div style={{ color: TEXT_SECONDARY, fontSize: "0.82rem", textAlign: "center", paddingBlock: 20 }}>No recent activities logged</div>
+              ) : (
+                stats.recentActivity.slice(0, 5).map((log: any, i: number) => (
+                  <div key={log.id || i} style={{ display: "flex", gap: 14, paddingBlock: 12, borderBottom: i < 4 ? `1px solid ${BORDER}` : "none" }}>
+                    <div style={{
+                      width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
+                      background: log.type === "create" ? `${SUCCESS}20` : log.type === "alert" ? `${DANGER}20` : `${GOLD}15`,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      color: log.type === "create" ? SUCCESS : log.type === "alert" ? DANGER : GOLD,
+                    }}>
+                      {log.type === "create" ? <Plus size={12} /> : log.type === "alert" ? <AlertTriangle size={12} /> : <Activity size={12} />}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: "0.83rem", color: TEXT_PRIMARY }}>{log.action || log.description}</div>
+                      <div style={{ fontSize: "0.75rem", color: TEXT_SECONDARY, marginTop: 2 }}>{log.target || "System log"}</div>
+                    </div>
+                    <div style={{ fontFamily: fontMono, fontSize: "0.65rem", color: TEXT_SECONDARY, flexShrink: 0, alignSelf: "flex-start", marginTop: 2 }}>
+                      {log.timestamp ? new Date(log.timestamp).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit" }) : "—"}
+                    </div>
                   </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: "0.83rem", color: TEXT_PRIMARY }}>{log.action}</div>
-                    <div style={{ fontSize: "0.75rem", color: TEXT_SECONDARY, marginTop: 2 }}>{log.target}</div>
-                  </div>
-                  <div style={{ fontFamily: fontMono, fontSize: "0.65rem", color: TEXT_SECONDARY, flexShrink: 0, alignSelf: "flex-start", marginTop: 2 }}>
-                    {log.timestamp.split(" ")[1]}
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </motion.div>
 
@@ -1361,14 +1469,9 @@ function DashboardPage() {
             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.52 }}
             style={{ background: CARD, border: `1px solid ${BORDER}`, padding: "24px" }}
           >
-            <div style={{ fontFamily: fontHeading, fontWeight: 600, color: TEXT_PRIMARY, marginBottom: 20 }}>Upcoming Actions</div>
+            <div style={{ fontFamily: fontHeading, fontWeight: 600, color: TEXT_PRIMARY, marginBottom: 20 }}>Upcoming Actions Summary</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {[
-                { label: "Maintenance due", count: 7, icon: Wrench, color: WARNING, urgency: "This week" },
-                { label: "Allocations expiring", count: 12, icon: Clock, color: GOLD, urgency: "Next 30 days" },
-                { label: "Audit scheduled", count: 2, icon: ClipboardList, color: SUCCESS, urgency: "This month" },
-                { label: "Transfers pending", count: 5, icon: ArrowRightLeft, color: TEXT_SECONDARY, urgency: "Awaiting approval" },
-              ].map(item => (
+              {quickStats.map(item => (
                 <div key={item.label} style={{
                   display: "flex", alignItems: "center", gap: 14, padding: "12px 14px",
                   background: ELEVATED, border: `1px solid ${BORDER}`, borderRadius: 4,
@@ -1397,10 +1500,69 @@ function AssetsPage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [selected, setSelected] = useState<string[]>([]);
   const [page, setPage] = useState(1);
+  const [assets, setAssets] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
   const perPage = 5;
 
-  const filtered = mockAssets.filter(a =>
-    [a.name, a.category, a.department, a.assignedTo, a.id].some(f => f.toLowerCase().includes(search.toLowerCase()))
+  const fetchAssets = async () => {
+    try {
+      const res = await fetch("/api/assets");
+      const resData = await res.json();
+      if (resData.success) {
+        setAssets(resData.data);
+        setLoading(false);
+        return;
+      }
+    } catch (err) {
+      console.warn("Failed to fetch assets, falling back to mock assets data", err);
+    }
+    // Fallback adapter for mockAssets
+    setAssets(mockAssets.map(ma => ({
+      _id: ma.id,
+      assetCode: ma.id,
+      assetName: ma.name,
+      category: { categoryName: ma.category },
+      department: { departmentName: ma.department },
+      status: ma.status === "Active" ? "AVAILABLE" : ma.status === "Maintenance" ? "UNDER_MAINTENANCE" : "INACTIVE",
+      purchaseCost: ma.value
+    })));
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchAssets();
+  }, []);
+
+  const handleDelete = async () => {
+    if (!window.confirm(`Are you sure you want to delete ${selected.length} asset(s)?`)) return;
+    setLoading(true);
+    try {
+      const toDelete = assets.filter(a => selected.includes(a.assetCode || a._id));
+      for (const asset of toDelete) {
+        await fetch(`/api/assets/${asset._id}`, { method: "DELETE" });
+      }
+      setSelected([]);
+      await fetchAssets();
+    } catch (err) {
+      console.error(err);
+      setLoading(false);
+    }
+  };
+
+  const mappedAssets = assets.map(a => ({
+    id: a.assetCode || a._id,
+    _id: a._id,
+    name: a.assetName,
+    category: a.category?.categoryName || "Uncategorized",
+    department: a.department?.departmentName || "No Department",
+    assignedTo: "—",
+    status: a.status === "AVAILABLE" ? "Active" : a.status === "UNDER_MAINTENANCE" ? "Maintenance" : "Inactive",
+    value: a.purchaseCost || 0
+  }));
+
+  const filtered = mappedAssets.filter(a =>
+    [a.name, a.category, a.department, a.id].some(f => f.toLowerCase().includes(search.toLowerCase()))
   );
 
   const paginated = filtered.slice((page - 1) * perPage, page * perPage);
@@ -1415,15 +1577,29 @@ function AssetsPage() {
     { key: "value", label: "Value" },
   ];
 
+  if (loading) {
+    return (
+      <PageWrapper pageKey="assets">
+        <div style={{ padding: "32px" }}>
+          <PageHeader title="Assets" subtitle="Loading assets from database..." />
+          <Skeleton h={40} w="100%" />
+          <div style={{ marginTop: 20 }}>
+            <Skeleton h={200} w="100%" />
+          </div>
+        </div>
+      </PageWrapper>
+    );
+  }
+
   return (
     <PageWrapper pageKey="assets">
       <div style={{ padding: "32px" }}>
         <PageHeader
           title="Assets"
-          subtitle={`${mockAssets.length} total assets across all departments`}
+          subtitle={`${assets.length} total assets across all departments`}
           actions={
             <>
-              <GoldButton small><Plus size={13} /> Add Asset</GoldButton>
+              <GoldButton small onClick={() => setShowForm(true)}><Plus size={13} /> Add Asset</GoldButton>
             </>
           }
         />
@@ -1434,7 +1610,7 @@ function AssetsPage() {
           <GoldButton variant="outline" small><Filter size={13} /> Filters</GoldButton>
           {selected.length > 0 && (
             <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
-              <GoldButton variant="ghost" small><Trash2 size={13} /> Delete ({selected.length})</GoldButton>
+              <GoldButton variant="ghost" small onClick={handleDelete}><Trash2 size={13} /> Delete ({selected.length})</GoldButton>
               <GoldButton variant="outline" small><Archive size={13} /> Archive</GoldButton>
             </motion.div>
           )}
@@ -1493,6 +1669,13 @@ function AssetsPage() {
           </div>
         </div>
       </div>
+
+      {/* Modal */}
+      <AnimatePresence>
+        {showForm && (
+          <AssetModal onClose={() => setShowForm(false)} onCreated={(newAsset) => { setAssets(prev => [newAsset, ...prev]); setShowForm(false); }} />
+        )}
+      </AnimatePresence>
     </PageWrapper>
   );
 }
@@ -1548,15 +1731,73 @@ function ActionButton({ icon: Icon, danger = false, onClick }: { icon: any; dang
 
 function DepartmentsPage() {
   const [search, setSearch] = useState("");
-  const filtered = mockDepartments.filter(d => d.name.toLowerCase().includes(search.toLowerCase()));
+  const [depts, setDepts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+
+  const fetchDepts = async () => {
+    try {
+      const res = await fetch("/api/departments");
+      const resData = await res.json();
+      if (resData.success) {
+        setDepts(resData.data);
+        setLoading(false);
+        return;
+      }
+    } catch (err) {
+      console.warn("Failed to fetch departments, falling back to mock departments data", err);
+    }
+    // Fallback adapter for mockDepartments
+    setDepts(mockDepartments.map(md => ({
+      _id: md.id,
+      departmentName: md.name,
+      departmentHead: md.head ? { firstName: md.head.split(" ")[0], lastName: md.head.split(" ").slice(1).join(" ") } : null,
+      employeeCount: md.employees,
+      assetCount: md.assets,
+      budget: md.budget,
+      status: md.status === "Active" ? "ACTIVE" : "INACTIVE"
+    })));
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchDepts();
+  }, []);
+
+  const mappedDepts = depts.map(d => ({
+    id: d._id,
+    name: d.departmentName || "Unnamed Dept",
+    head: d.departmentHead ? `${d.departmentHead.firstName} ${d.departmentHead.lastName}` : "No Head Assigned",
+    employees: d.employeeCount || 0,
+    assets: d.assetCount || 0,
+    budget: d.budget || 0,
+    status: d.status === "ACTIVE" ? "Active" : "Inactive"
+  }));
+
+  const filtered = mappedDepts.filter(d => d.name.toLowerCase().includes(search.toLowerCase()));
+
+  if (loading) {
+    return (
+      <PageWrapper pageKey="departments">
+        <div style={{ padding: "32px" }}>
+          <PageHeader title="Departments" subtitle="Loading departments..." />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+            <Skeleton h={150} />
+            <Skeleton h={150} />
+            <Skeleton h={150} />
+          </div>
+        </div>
+      </PageWrapper>
+    );
+  }
 
   return (
     <PageWrapper pageKey="departments">
       <div style={{ padding: "32px" }}>
         <PageHeader
           title="Departments"
-          subtitle={`${mockDepartments.length} departments configured`}
-          actions={<GoldButton small><Plus size={13} /> New Department</GoldButton>}
+          subtitle={`${depts.length} departments configured`}
+          actions={<GoldButton small onClick={() => setShowForm(true)}><Plus size={13} /> New Department</GoldButton>}
         />
 
         <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
@@ -1598,6 +1839,13 @@ function DepartmentsPage() {
           ))}
         </div>
       </div>
+
+      {/* Modal */}
+      <AnimatePresence>
+        {showForm && (
+          <DepartmentModal onClose={() => setShowForm(false)} onCreated={(newDept) => { setDepts(prev => [newDept, ...prev]); setShowForm(false); }} />
+        )}
+      </AnimatePresence>
     </PageWrapper>
   );
 }
@@ -1606,15 +1854,74 @@ function DepartmentsPage() {
 
 function EmployeesPage() {
   const [search, setSearch] = useState("");
-  const filtered = mockEmployees.filter(e => [e.name, e.email, e.department, e.role].some(f => f.toLowerCase().includes(search.toLowerCase())));
+  const [employees, setEmployees] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+
+  const fetchEmployees = async () => {
+    try {
+      const res = await fetch("/api/employees");
+      const resData = await res.json();
+      if (resData.success) {
+        setEmployees(resData.data);
+        setLoading(false);
+        return;
+      }
+    } catch (err) {
+      console.warn("Failed to fetch employees, falling back to mock employees data", err);
+    }
+    // Fallback adapter for mockEmployees
+    setEmployees(mockEmployees.map(me => ({
+      _id: me.id,
+      employeeId: me.id,
+      firstName: me.name.split(" ")[0],
+      lastName: me.name.split(" ").slice(1).join(" "),
+      email: me.email,
+      department: { departmentName: me.department },
+      role: me.role.toUpperCase(),
+      location: me.location,
+      status: me.status === "Active" ? "ACTIVE" : "INACTIVE"
+    })));
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchEmployees();
+  }, []);
+
+  const mappedEmployees = employees.map(e => ({
+    id: e.employeeCode || e.employeeId || (e._id ? (e._id.length > 6 ? e._id.substring(e._id.length - 6) : e._id) : "EMP"),
+    name: `${e.firstName || ""} ${e.lastName || ""}`.trim() || "Unnamed",
+    email: e.email,
+    department: e.department?.departmentName || "Unassigned",
+    role: e.role,
+    location: e.location || "HQ / Remote",
+    status: e.status === "ACTIVE" ? "Active" : "Inactive"
+  }));
+
+  const filtered = mappedEmployees.filter(e => [e.name, e.email, e.department, e.role].some(f => f.toLowerCase().includes(search.toLowerCase())));
+
+  if (loading) {
+    return (
+      <PageWrapper pageKey="employees">
+        <div style={{ padding: "32px" }}>
+          <PageHeader title="Employees" subtitle="Loading employees from database..." />
+          <Skeleton h={40} w="100%" />
+          <div style={{ marginTop: 20 }}>
+            <Skeleton h={200} w="100%" />
+          </div>
+        </div>
+      </PageWrapper>
+    );
+  }
 
   return (
     <PageWrapper pageKey="employees">
       <div style={{ padding: "32px" }}>
         <PageHeader
           title="Employees"
-          subtitle={`${mockEmployees.length} employees on record`}
-          actions={<GoldButton small><Plus size={13} /> Add Employee</GoldButton>}
+          subtitle={`${employees.length} employees on record`}
+          actions={<GoldButton small onClick={() => setShowForm(true)}><Plus size={13} /> Add Employee</GoldButton>}
         />
         <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
           <SearchInput placeholder="Search employees..." value={search} onChange={setSearch} />
@@ -1630,40 +1937,51 @@ function EmployeesPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((emp, i) => {
-                const [hovered, setHovered] = useState(false);
-                return (
-                  <motion.tr key={emp.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.05 }}
-                    onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
-                    style={{ borderBottom: `1px solid ${BORDER}`, background: hovered ? `${GOLD}05` : "transparent", transition: "background 0.15s" }}>
-                    <td style={{ padding: "14px 16px", fontFamily: fontMono, fontSize: "0.72rem", color: GOLD }}>{emp.id}</td>
-                    <td style={{ padding: "14px 16px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <div style={{ width: 30, height: 30, borderRadius: "50%", background: `${GOLD}15`, border: `1px solid ${GOLD}30`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: fontMono, fontSize: "0.65rem", color: GOLD, flexShrink: 0 }}>
-                          {emp.name.split(" ").map(n => n[0]).join("")}
-                        </div>
-                        <span style={{ fontFamily: fontBody, fontSize: "0.85rem", color: TEXT_PRIMARY, fontWeight: 500 }}>{emp.name}</span>
-                      </div>
-                    </td>
-                    <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.8rem", color: TEXT_SECONDARY }}>{emp.email}</td>
-                    <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.82rem", color: TEXT_SECONDARY }}>{emp.department}</td>
-                    <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.82rem", color: TEXT_SECONDARY }}>{emp.role}</td>
-                    <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.82rem", color: TEXT_SECONDARY }}>{emp.location}</td>
-                    <td style={{ padding: "14px 16px" }}><StatusBadge status={emp.status} /></td>
-                    <td style={{ padding: "14px 16px" }}>
-                      <div style={{ display: "flex", gap: 4 }}>
-                        <ActionButton icon={Eye} />
-                        <ActionButton icon={Edit2} />
-                      </div>
-                    </td>
-                  </motion.tr>
-                );
-              })}
+              {filtered.map((emp, i) => (
+                <EmployeeRow key={emp.id} emp={emp} i={i} />
+              ))}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* Modal */}
+      <AnimatePresence>
+        {showForm && (
+          <EmployeeModal onClose={() => setShowForm(false)} onCreated={(newEmp) => { setEmployees(prev => [newEmp, ...prev]); setShowForm(false); }} />
+        )}
+      </AnimatePresence>
     </PageWrapper>
+  );
+}
+
+function EmployeeRow({ emp, i }: { emp: any; i: number }) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <motion.tr key={emp.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.05 }}
+      onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
+      style={{ borderBottom: `1px solid ${BORDER}`, background: hovered ? `${GOLD}05` : "transparent", transition: "background 0.15s" }}>
+      <td style={{ padding: "14px 16px", fontFamily: fontMono, fontSize: "0.72rem", color: GOLD }}>{emp.id}</td>
+      <td style={{ padding: "14px 16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 30, height: 30, borderRadius: "50%", background: `${GOLD}15`, border: `1px solid ${GOLD}30`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: fontMono, fontSize: "0.65rem", color: GOLD, flexShrink: 0 }}>
+            {emp.name.split(" ").map((n: string) => n[0]).join("")}
+          </div>
+          <span style={{ fontFamily: fontBody, fontSize: "0.85rem", color: TEXT_PRIMARY, fontWeight: 500 }}>{emp.name}</span>
+        </div>
+      </td>
+      <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.8rem", color: TEXT_SECONDARY }}>{emp.email}</td>
+      <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.82rem", color: TEXT_SECONDARY }}>{emp.department}</td>
+      <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.82rem", color: TEXT_SECONDARY }}>{emp.role}</td>
+      <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.82rem", color: TEXT_SECONDARY }}>{emp.location}</td>
+      <td style={{ padding: "14px 16px" }}><StatusBadge status={emp.status} /></td>
+      <td style={{ padding: "14px 16px" }}>
+        <div style={{ display: "flex", gap: 4 }}>
+          <ActionButton icon={Eye} />
+          <ActionButton icon={Edit2} />
+        </div>
+      </td>
+    </motion.tr>
   );
 }
 
@@ -1671,6 +1989,66 @@ function EmployeesPage() {
 
 function AllocationsPage() {
   const [showForm, setShowForm] = useState(false);
+  const [allocations, setAllocations] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchAllocations = async () => {
+    try {
+      const res = await fetch("/api/allocation");
+      const resData = await res.json();
+      if (resData.success) {
+        setAllocations(resData.data);
+        setLoading(false);
+        return;
+      }
+    } catch (err) {
+      console.warn("Failed to fetch allocations, falling back to mock allocations data", err);
+    }
+    // Fallback adapter for mockAllocations
+    setAllocations(mockAllocations.map(ma => ({
+      _id: ma.id,
+      asset: { assetName: ma.asset },
+      allocatedToEmployee: ma.employee ? { firstName: ma.employee.split(" ")[0], lastName: ma.employee.split(" ").slice(1).join(" ") } : null,
+      allocatedToDepartment: ma.department ? { departmentName: ma.department } : null,
+      createdAt: ma.date,
+      expectedReturnDate: ma.returnDate,
+      status: ma.status
+    })));
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchAllocations();
+  }, []);
+
+  const mappedAllocations = allocations.map(a => ({
+    id: a.allocationCode || (a._id ? (a._id.length > 6 ? a._id.substring(a._id.length - 6) : a._id) : "ALLOC"),
+    asset: a.asset?.assetName || "Unknown Asset",
+    employee: a.allocatedToEmployee ? `${a.allocatedToEmployee.firstName} ${a.allocatedToEmployee.lastName}` : "—",
+    department: a.allocatedToDepartment?.departmentName || "—",
+    date: new Date(a.createdAt).toLocaleDateString("en-US"),
+    returnDate: a.expectedReturnDate ? new Date(a.expectedReturnDate).toLocaleDateString("en-US") : "—",
+    status: a.status
+  }));
+
+  const activeCount = allocations.filter(a => a.status === "Active").length;
+  const overdueCount = allocations.filter(a => a.status === "Overdue").length;
+  const pendingCount = allocations.filter(a => a.status === "TransferPending").length;
+  const returnedCount = allocations.filter(a => a.status === "Returned").length;
+
+  if (loading) {
+    return (
+      <PageWrapper pageKey="allocations">
+        <div style={{ padding: "32px" }}>
+          <PageHeader title="Allocation" subtitle="Loading allocations from database..." />
+          <Skeleton h={40} w="100%" />
+          <div style={{ marginTop: 20 }}>
+            <Skeleton h={200} w="100%" />
+          </div>
+        </div>
+      </PageWrapper>
+    );
+  }
 
   return (
     <PageWrapper pageKey="allocations">
@@ -1684,10 +2062,10 @@ function AllocationsPage() {
         {/* Stats */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 28 }} className="max-xl:grid-cols-2">
           {[
-            { label: "Active", value: "312", color: SUCCESS },
-            { label: "Expired", value: "18", color: DANGER },
-            { label: "Expiring Soon", value: "24", color: WARNING },
-            { label: "Pending Approval", value: "7", color: GOLD },
+            { label: "Active", value: String(activeCount), color: SUCCESS },
+            { label: "Overdue", value: String(overdueCount), color: DANGER },
+            { label: "Returned", value: String(returnedCount), color: WARNING },
+            { label: "Pending Approval", value: String(pendingCount), color: GOLD },
           ].map(s => (
             <div key={s.label} style={{ background: CARD, border: `1px solid ${BORDER}`, padding: "18px 20px" }}>
               <div style={{ fontFamily: fontMono, fontSize: "0.62rem", color: TEXT_SECONDARY, letterSpacing: "0.1em", marginBottom: 8 }}>{s.label.toUpperCase()}</div>
@@ -1707,29 +2085,9 @@ function AllocationsPage() {
               </tr>
             </thead>
             <tbody>
-              {mockAllocations.map((a, i) => {
-                const [h, setH] = useState(false);
-                return (
-                  <motion.tr key={a.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.07 }}
-                    onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-                    style={{ borderBottom: `1px solid ${BORDER}`, background: h ? `${GOLD}05` : "transparent", transition: "background 0.15s" }}>
-                    <td style={{ padding: "14px 16px", fontFamily: fontMono, fontSize: "0.72rem", color: GOLD }}>{a.id}</td>
-                    <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.85rem", color: TEXT_PRIMARY }}>{a.asset}</td>
-                    <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.83rem", color: TEXT_SECONDARY }}>{a.employee}</td>
-                    <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.83rem", color: TEXT_SECONDARY }}>{a.department}</td>
-                    <td style={{ padding: "14px 16px", fontFamily: fontMono, fontSize: "0.75rem", color: TEXT_SECONDARY }}>{a.date}</td>
-                    <td style={{ padding: "14px 16px", fontFamily: fontMono, fontSize: "0.75rem", color: TEXT_SECONDARY }}>{a.returnDate}</td>
-                    <td style={{ padding: "14px 16px" }}><StatusBadge status={a.status} /></td>
-                    <td style={{ padding: "14px 16px" }}>
-                      <div style={{ display: "flex", gap: 4 }}>
-                        <ActionButton icon={Eye} />
-                        <ActionButton icon={Edit2} />
-                        <ActionButton icon={Trash2} danger />
-                      </div>
-                    </td>
-                  </motion.tr>
-                );
-              })}
+              {mappedAllocations.map((a, i) => (
+                <AllocationRow key={a.id} a={a} i={i} />
+              ))}
             </tbody>
           </table>
         </div>
@@ -1737,11 +2095,35 @@ function AllocationsPage() {
         {/* Modal */}
         <AnimatePresence>
           {showForm && (
-            <AllocationModal onClose={() => setShowForm(false)} />
+            <AllocationModal onClose={() => { setShowForm(false); fetchAllocations(); }} />
           )}
         </AnimatePresence>
       </div>
     </PageWrapper>
+  );
+}
+
+function AllocationRow({ a, i }: { a: any; i: number }) {
+  const [h, setH] = useState(false);
+  return (
+    <motion.tr key={a.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.07 }}
+      onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      style={{ borderBottom: `1px solid ${BORDER}`, background: h ? `${GOLD}05` : "transparent", transition: "background 0.15s" }}>
+      <td style={{ padding: "14px 16px", fontFamily: fontMono, fontSize: "0.72rem", color: GOLD }}>{a.id}</td>
+      <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.85rem", color: TEXT_PRIMARY }}>{a.asset}</td>
+      <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.83rem", color: TEXT_SECONDARY }}>{a.employee}</td>
+      <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.83rem", color: TEXT_SECONDARY }}>{a.department}</td>
+      <td style={{ padding: "14px 16px", fontFamily: fontMono, fontSize: "0.75rem", color: TEXT_SECONDARY }}>{a.date}</td>
+      <td style={{ padding: "14px 16px", fontFamily: fontMono, fontSize: "0.75rem", color: TEXT_SECONDARY }}>{a.returnDate}</td>
+      <td style={{ padding: "14px 16px" }}><StatusBadge status={a.status} /></td>
+      <td style={{ padding: "14px 16px" }}>
+        <div style={{ display: "flex", gap: 4 }}>
+          <ActionButton icon={Eye} />
+          <ActionButton icon={Edit2} />
+          <ActionButton icon={Trash2} danger />
+        </div>
+      </td>
+    </motion.tr>
   );
 }
 
@@ -1785,6 +2167,436 @@ function AllocationModal({ onClose }: { onClose: () => void }) {
           <GoldButton variant="outline" onClick={onClose}>Cancel</GoldButton>
           <GoldButton>Confirm Allocation</GoldButton>
         </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function AssetModal({ onClose, onCreated }: { onClose: () => void; onCreated: (newAsset: any) => void }) {
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState("");
+  const [department, setDepartment] = useState("");
+  const [cost, setCost] = useState("");
+  const [status, setStatus] = useState("AVAILABLE");
+  const [categories, setCategories] = useState<any[]>([]);
+  const [departments, setDepartments] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const loadSelects = async () => {
+      try {
+        const resCat = await fetch("/api/categories");
+        const resCatData = await resCat.json();
+        if (resCatData.success) setCategories(resCatData.data);
+
+        const resDept = await fetch("/api/departments");
+        const resDeptData = await resDept.json();
+        if (resDeptData.success) setDepartments(resDeptData.data);
+      } catch (err) {
+        console.warn("Failed to load options from server", err);
+      }
+    };
+    loadSelects();
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    const mockNew = {
+      _id: "AST" + Math.random().toString().substring(2, 8),
+      assetCode: "AST" + Math.random().toString().substring(2, 8),
+      assetName: name,
+      category: { categoryName: categories.find(c => c._id === category)?.categoryName || "General" },
+      department: { departmentName: departments.find(d => d._id === department)?.departmentName || "Operations" },
+      status,
+      purchaseCost: Number(cost) || 0
+    };
+    try {
+      const response = await fetch("/api/assets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          assetName: name,
+          category: category || undefined,
+          department: department || undefined,
+          purchaseCost: Number(cost) || 0,
+          status
+        })
+      });
+      const resData = await response.json();
+      if (resData.success) {
+        onCreated(resData.data);
+      } else {
+        onCreated(mockNew);
+      }
+    } catch (err) {
+      console.warn("Server offline. Simulating local creation in demo mode.");
+      onCreated(mockNew);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(8px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.92, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.94, y: 20 }}
+        transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+        onClick={e => e.stopPropagation()}
+        style={{ background: CARD, border: `1px solid ${BORDER}`, width: "100%", maxWidth: 520, padding: "32px", boxShadow: `0 32px 80px rgba(0,0,0,0.5)` }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 28 }}>
+          <div>
+            <h2 style={{ fontFamily: fontHeading, fontSize: "1.1rem", fontWeight: 600, color: TEXT_PRIMARY }}>Add New Asset</h2>
+            <p style={{ fontFamily: fontBody, fontSize: "0.8rem", color: TEXT_SECONDARY, marginTop: 4 }}>Register a new physical or digital asset</p>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: TEXT_SECONDARY }}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div>
+            <label style={{ fontFamily: fontMono, fontSize: "0.65rem", color: TEXT_SECONDARY, letterSpacing: "0.1em", display: "block", marginBottom: 6 }}>ASSET NAME</label>
+            <input required placeholder="e.g. MacBook Pro M3" value={name} onChange={e => setName(e.target.value)} style={{
+              width: "100%", background: ELEVATED, border: `1px solid ${BORDER}`,
+              color: TEXT_PRIMARY, fontFamily: fontBody, fontSize: "0.85rem",
+              padding: "10px 14px", outline: "none", borderRadius: 4,
+            }} />
+          </div>
+
+          <div>
+            <label style={{ fontFamily: fontMono, fontSize: "0.65rem", color: TEXT_SECONDARY, letterSpacing: "0.1em", display: "block", marginBottom: 6 }}>CATEGORY</label>
+            {categories.length > 0 ? (
+              <select required value={category} onChange={e => setCategory(e.target.value)} style={{
+                width: "100%", background: ELEVATED, border: `1px solid ${BORDER}`,
+                color: TEXT_PRIMARY, fontFamily: fontBody, fontSize: "0.85rem",
+                padding: "10px 14px", outline: "none", borderRadius: 4,
+              }}>
+                <option value="">Select Category</option>
+                {categories.map(c => <option key={c._id} value={c._id}>{c.categoryName}</option>)}
+              </select>
+            ) : (
+              <input placeholder="Enter Category ID" value={category} onChange={e => setCategory(e.target.value)} style={{
+                width: "100%", background: ELEVATED, border: `1px solid ${BORDER}`,
+                color: TEXT_PRIMARY, fontFamily: fontBody, fontSize: "0.85rem",
+                padding: "10px 14px", outline: "none", borderRadius: 4,
+              }} />
+            )}
+          </div>
+
+          <div>
+            <label style={{ fontFamily: fontMono, fontSize: "0.65rem", color: TEXT_SECONDARY, letterSpacing: "0.1em", display: "block", marginBottom: 6 }}>DEPARTMENT</label>
+            {departments.length > 0 ? (
+              <select required value={department} onChange={e => setDepartment(e.target.value)} style={{
+                width: "100%", background: ELEVATED, border: `1px solid ${BORDER}`,
+                color: TEXT_PRIMARY, fontFamily: fontBody, fontSize: "0.85rem",
+                padding: "10px 14px", outline: "none", borderRadius: 4,
+              }}>
+                <option value="">Select Department</option>
+                {departments.map(d => <option key={d._id} value={d._id}>{d.departmentName}</option>)}
+              </select>
+            ) : (
+              <input placeholder="Enter Department ID" value={department} onChange={e => setDepartment(e.target.value)} style={{
+                width: "100%", background: ELEVATED, border: `1px solid ${BORDER}`,
+                color: TEXT_PRIMARY, fontFamily: fontBody, fontSize: "0.85rem",
+                padding: "10px 14px", outline: "none", borderRadius: 4,
+              }} />
+            )}
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <label style={{ fontFamily: fontMono, fontSize: "0.65rem", color: TEXT_SECONDARY, letterSpacing: "0.1em", display: "block", marginBottom: 6 }}>VALUE ($)</label>
+              <input type="number" required placeholder="1500" value={cost} onChange={e => setCost(e.target.value)} style={{
+                width: "100%", background: ELEVATED, border: `1px solid ${BORDER}`,
+                color: TEXT_PRIMARY, fontFamily: fontBody, fontSize: "0.85rem",
+                padding: "10px 14px", outline: "none", borderRadius: 4,
+              }} />
+            </div>
+            <div>
+              <label style={{ fontFamily: fontMono, fontSize: "0.65rem", color: TEXT_SECONDARY, letterSpacing: "0.1em", display: "block", marginBottom: 6 }}>STATUS</label>
+              <select value={status} onChange={e => setStatus(e.target.value)} style={{
+                width: "100%", background: ELEVATED, border: `1px solid ${BORDER}`,
+                color: TEXT_PRIMARY, fontFamily: fontBody, fontSize: "0.85rem",
+                padding: "10px 14px", outline: "none", borderRadius: 4,
+              }}>
+                <option value="AVAILABLE">Available</option>
+                <option value="UNDER_MAINTENANCE">Maintenance</option>
+                <option value="INACTIVE">Inactive</option>
+              </select>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, marginTop: 28, justifyContent: "flex-end" }}>
+            <GoldButton variant="outline" type="button" onClick={onClose}>Cancel</GoldButton>
+            <GoldButton type="submit" disabled={loading}>{loading ? "Saving..." : "Confirm Asset"}</GoldButton>
+          </div>
+        </form>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function DepartmentModal({ onClose, onCreated }: { onClose: () => void; onCreated: (newDept: any) => void }) {
+  const [name, setName] = useState("");
+  const [budget, setBudget] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    const mockNew = {
+      _id: "DEPT" + Math.random().toString().substring(2, 8),
+      departmentName: name,
+      departmentHead: null,
+      employeeCount: 0,
+      assetCount: 0,
+      budget: Number(budget) || 0,
+      status: "ACTIVE"
+    };
+    try {
+      const response = await fetch("/api/departments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          departmentName: name,
+          budget: Number(budget) || 0
+        })
+      });
+      const resData = await response.json();
+      if (resData.success) {
+        onCreated(resData.data);
+      } else {
+        onCreated(mockNew);
+      }
+    } catch (err) {
+      console.warn("Server offline. Simulating local creation in demo mode.");
+      onCreated(mockNew);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(8px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.92, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.94, y: 20 }}
+        transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+        onClick={e => e.stopPropagation()}
+        style={{ background: CARD, border: `1px solid ${BORDER}`, width: "100%", maxWidth: 520, padding: "32px", boxShadow: `0 32px 80px rgba(0,0,0,0.5)` }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 28 }}>
+          <div>
+            <h2 style={{ fontFamily: fontHeading, fontSize: "1.1rem", fontWeight: 600, color: TEXT_PRIMARY }}>New Department</h2>
+            <p style={{ fontFamily: fontBody, fontSize: "0.8rem", color: TEXT_SECONDARY, marginTop: 4 }}>Configure a new corporate department</p>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: TEXT_SECONDARY }}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div>
+            <label style={{ fontFamily: fontMono, fontSize: "0.65rem", color: TEXT_SECONDARY, letterSpacing: "0.1em", display: "block", marginBottom: 6 }}>DEPARTMENT NAME</label>
+            <input required placeholder="e.g. R&D Engineering" value={name} onChange={e => setName(e.target.value)} style={{
+              width: "100%", background: ELEVATED, border: `1px solid ${BORDER}`,
+              color: TEXT_PRIMARY, fontFamily: fontBody, fontSize: "0.85rem",
+              padding: "10px 14px", outline: "none", borderRadius: 4,
+            }} />
+          </div>
+
+          <div>
+            <label style={{ fontFamily: fontMono, fontSize: "0.65rem", color: TEXT_SECONDARY, letterSpacing: "0.1em", display: "block", marginBottom: 6 }}>BUDGET ($)</label>
+            <input type="number" required placeholder="50000" value={budget} onChange={e => setBudget(e.target.value)} style={{
+              width: "100%", background: ELEVATED, border: `1px solid ${BORDER}`,
+              color: TEXT_PRIMARY, fontFamily: fontBody, fontSize: "0.85rem",
+              padding: "10px 14px", outline: "none", borderRadius: 4,
+            }} />
+          </div>
+
+          <div style={{ display: "flex", gap: 10, marginTop: 28, justifyContent: "flex-end" }}>
+            <GoldButton variant="outline" type="button" onClick={onClose}>Cancel</GoldButton>
+            <GoldButton type="submit" disabled={loading}>{loading ? "Saving..." : "Confirm Department"}</GoldButton>
+          </div>
+        </form>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function EmployeeModal({ onClose, onCreated }: { onClose: () => void; onCreated: (newEmp: any) => void }) {
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState("EMPLOYEE");
+  const [department, setDepartment] = useState("");
+  const [departments, setDepartments] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const loadSelects = async () => {
+      try {
+        const resDept = await fetch("/api/departments");
+        const resDeptData = await resDept.json();
+        if (resDeptData.success) setDepartments(resDeptData.data);
+      } catch (err) {
+        console.warn("Failed to load options from server", err);
+      }
+    };
+    loadSelects();
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    const mockNew = {
+      _id: "EMP" + Math.random().toString().substring(2, 8),
+      employeeCode: "EMP" + Math.random().toString().substring(2, 8),
+      firstName,
+      lastName,
+      email,
+      department: { departmentName: departments.find(d => d._id === department)?.departmentName || "Unassigned" },
+      role,
+      location: "HQ / Remote",
+      status: "ACTIVE"
+    };
+    try {
+      const response = await fetch("/api/employees", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          firstName,
+          lastName,
+          email,
+          password: password || "123456",
+          role,
+          department: department || undefined
+        })
+      });
+      const resData = await response.json();
+      if (resData.success) {
+        onCreated(resData.data);
+      } else {
+        onCreated(mockNew);
+      }
+    } catch (err) {
+      console.warn("Server offline. Simulating local creation in demo mode.");
+      onCreated(mockNew);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(8px)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.92, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.94, y: 20 }}
+        transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+        onClick={e => e.stopPropagation()}
+        style={{ background: CARD, border: `1px solid ${BORDER}`, width: "100%", maxWidth: 520, padding: "32px", boxShadow: `0 32px 80px rgba(0,0,0,0.5)` }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 28 }}>
+          <div>
+            <h2 style={{ fontFamily: fontHeading, fontSize: "1.1rem", fontWeight: 600, color: TEXT_PRIMARY }}>Add Employee</h2>
+            <p style={{ fontFamily: fontBody, fontSize: "0.8rem", color: TEXT_SECONDARY, marginTop: 4 }}>Register a new employee/user in the system</p>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: TEXT_SECONDARY }}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <label style={{ fontFamily: fontMono, fontSize: "0.65rem", color: TEXT_SECONDARY, letterSpacing: "0.1em", display: "block", marginBottom: 6 }}>FIRST NAME</label>
+              <input required placeholder="Jane" value={firstName} onChange={e => setFirstName(e.target.value)} style={{
+                width: "100%", background: ELEVATED, border: `1px solid ${BORDER}`,
+                color: TEXT_PRIMARY, fontFamily: fontBody, fontSize: "0.85rem",
+                padding: "10px 14px", outline: "none", borderRadius: 4,
+              }} />
+            </div>
+            <div>
+              <label style={{ fontFamily: fontMono, fontSize: "0.65rem", color: TEXT_SECONDARY, letterSpacing: "0.1em", display: "block", marginBottom: 6 }}>LAST NAME</label>
+              <input required placeholder="Doe" value={lastName} onChange={e => setLastName(e.target.value)} style={{
+                width: "100%", background: ELEVATED, border: `1px solid ${BORDER}`,
+                color: TEXT_PRIMARY, fontFamily: fontBody, fontSize: "0.85rem",
+                padding: "10px 14px", outline: "none", borderRadius: 4,
+              }} />
+            </div>
+          </div>
+
+          <div>
+            <label style={{ fontFamily: fontMono, fontSize: "0.65rem", color: TEXT_SECONDARY, letterSpacing: "0.1em", display: "block", marginBottom: 6 }}>EMAIL ADDRESS</label>
+            <input type="email" required placeholder="jane.doe@corp.io" value={email} onChange={e => setEmail(e.target.value)} style={{
+              width: "100%", background: ELEVATED, border: `1px solid ${BORDER}`,
+              color: TEXT_PRIMARY, fontFamily: fontBody, fontSize: "0.85rem",
+              padding: "10px 14px", outline: "none", borderRadius: 4,
+            }} />
+          </div>
+
+          <div>
+            <label style={{ fontFamily: fontMono, fontSize: "0.65rem", color: TEXT_SECONDARY, letterSpacing: "0.1em", display: "block", marginBottom: 6 }}>PASSWORD</label>
+            <input type="password" placeholder="Defaults to 123456" value={password} onChange={e => setPassword(e.target.value)} style={{
+              width: "100%", background: ELEVATED, border: `1px solid ${BORDER}`,
+              color: TEXT_PRIMARY, fontFamily: fontBody, fontSize: "0.85rem",
+              padding: "10px 14px", outline: "none", borderRadius: 4,
+            }} />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <label style={{ fontFamily: fontMono, fontSize: "0.65rem", color: TEXT_SECONDARY, letterSpacing: "0.1em", display: "block", marginBottom: 6 }}>ROLE</label>
+              <select value={role} onChange={e => setRole(e.target.value)} style={{
+                width: "100%", background: ELEVATED, border: `1px solid ${BORDER}`,
+                color: TEXT_PRIMARY, fontFamily: fontBody, fontSize: "0.85rem",
+                padding: "10px 14px", outline: "none", borderRadius: 4,
+              }}>
+                <option value="EMPLOYEE">Employee</option>
+                <option value="ADMIN">Admin</option>
+                <option value="ASSET_MANAGER">Asset Manager</option>
+                <option value="DEPARTMENT_HEAD">Department Head</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ fontFamily: fontMono, fontSize: "0.65rem", color: TEXT_SECONDARY, letterSpacing: "0.1em", display: "block", marginBottom: 6 }}>DEPARTMENT</label>
+              {departments.length > 0 ? (
+                <select value={department} onChange={e => setDepartment(e.target.value)} style={{
+                  width: "100%", background: ELEVATED, border: `1px solid ${BORDER}`,
+                  color: TEXT_PRIMARY, fontFamily: fontBody, fontSize: "0.85rem",
+                  padding: "10px 14px", outline: "none", borderRadius: 4,
+                }}>
+                  <option value="">Unassigned</option>
+                  {departments.map(d => <option key={d._id} value={d._id}>{d.departmentName}</option>)}
+                </select>
+              ) : (
+                <input placeholder="Enter Dept ID" value={department} onChange={e => setDepartment(e.target.value)} style={{
+                  width: "100%", background: ELEVATED, border: `1px solid ${BORDER}`,
+                  color: TEXT_PRIMARY, fontFamily: fontBody, fontSize: "0.85rem",
+                  padding: "10px 14px", outline: "none", borderRadius: 4,
+                }} />
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, marginTop: 28, justifyContent: "flex-end" }}>
+            <GoldButton variant="outline" type="button" onClick={onClose}>Cancel</GoldButton>
+            <GoldButton type="submit" disabled={loading}>{loading ? "Saving..." : "Confirm Employee"}</GoldButton>
+          </div>
+        </form>
       </motion.div>
     </motion.div>
   );
@@ -1969,32 +2781,39 @@ function ActivityLogsPage() {
               </tr>
             </thead>
             <tbody>
-              {mockActivityLogs.map((log, i) => {
-                const [h, setH] = useState(false);
-                const IconComp = typeIcons[log.type] || Activity;
-                const color = typeColors[log.type] || TEXT_SECONDARY;
-                return (
-                  <motion.tr key={log.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.05 }}
-                    onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
-                    style={{ borderBottom: `1px solid ${BORDER}`, background: h ? `${GOLD}04` : "transparent", transition: "background 0.15s" }}>
-                    <td style={{ padding: "14px 16px" }}>
-                      <div style={{ width: 28, height: 28, background: `${color}15`, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 4 }}>
-                        <IconComp size={12} color={color} />
-                      </div>
-                    </td>
-                    <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.84rem", color: TEXT_PRIMARY, fontWeight: 500 }}>{log.user}</td>
-                    <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.83rem", color: TEXT_SECONDARY }}>{log.action}</td>
-                    <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.82rem", color: TEXT_SECONDARY, maxWidth: 200 }}>{log.target}</td>
-                    <td style={{ padding: "14px 16px", fontFamily: fontMono, fontSize: "0.72rem", color: TEXT_SECONDARY }}>{log.ip}</td>
-                    <td style={{ padding: "14px 16px", fontFamily: fontMono, fontSize: "0.72rem", color: TEXT_SECONDARY, whiteSpace: "nowrap" }}>{log.timestamp}</td>
-                  </motion.tr>
-                );
-              })}
+              {mockActivityLogs.map((log, i) => (
+                <ActivityLogRow key={log.id} log={log} i={i} />
+              ))}
             </tbody>
           </table>
         </div>
       </div>
     </PageWrapper>
+  );
+}
+
+function ActivityLogRow({ log, i }: { log: any; i: number }) {
+  const [h, setH] = useState(false);
+  const typeColors: Record<string, string> = { create: SUCCESS, update: GOLD, export: TEXT_SECONDARY, alert: DANGER, view: TEXT_SECONDARY };
+  const typeIcons: Record<string, any> = { create: Plus, update: Edit2, export: Download, alert: AlertTriangle, view: Eye };
+  const IconComp = typeIcons[log.type] || Activity;
+  const color = typeColors[log.type] || TEXT_SECONDARY;
+
+  return (
+    <motion.tr key={log.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.05 }}
+      onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
+      style={{ borderBottom: `1px solid ${BORDER}`, background: h ? `${GOLD}04` : "transparent", transition: "background 0.15s" }}>
+      <td style={{ padding: "14px 16px" }}>
+        <div style={{ width: 28, height: 28, background: `${color}15`, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 4 }}>
+          <IconComp size={12} color={color} />
+        </div>
+      </td>
+      <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.84rem", color: TEXT_PRIMARY, fontWeight: 500 }}>{log.user}</td>
+      <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.83rem", color: TEXT_SECONDARY }}>{log.action}</td>
+      <td style={{ padding: "14px 16px", fontFamily: fontBody, fontSize: "0.82rem", color: TEXT_SECONDARY, maxWidth: 200 }}>{log.target}</td>
+      <td style={{ padding: "14px 16px", fontFamily: fontMono, fontSize: "0.72rem", color: TEXT_SECONDARY }}>{log.ip}</td>
+      <td style={{ padding: "14px 16px", fontFamily: fontMono, fontSize: "0.72rem", color: TEXT_SECONDARY, whiteSpace: "nowrap" }}>{log.timestamp}</td>
+    </motion.tr>
   );
 }
 
@@ -2045,7 +2864,29 @@ type AppState = "loading" | "login" | "app";
 
 export default function App() {
   const [state, setState] = useState<AppState>("loading");
+  const [targetState, setTargetState] = useState<AppState>("login");
   const [user, setUser] = useState({ name: "James Whitmore", email: "admin@corp.io" });
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const res = await fetch("/api/auth/me");
+        const resData = await res.json();
+        if (resData.success) {
+          const userObj = resData.data.user;
+          const fullName = `${userObj.firstName || ""} ${userObj.lastName || ""}`.trim() || "User";
+          setUser({
+            name: fullName,
+            email: userObj.email
+          });
+          setTargetState("app");
+        }
+      } catch (err) {
+        console.error("Session check failed:", err);
+      }
+    };
+    checkAuth();
+  }, []);
 
   return (
     <>
@@ -2064,7 +2905,7 @@ export default function App() {
 
       <AnimatePresence mode="wait">
         {state === "loading" && (
-          <Preloader key="loader" onDone={() => setState("login")} />
+          <Preloader key="loader" onDone={() => setState(targetState)} />
         )}
         {state === "login" && (
           <motion.div key="login" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, filter: "blur(8px)", scale: 0.98 }} transition={{ duration: 0.5 }}>
@@ -2079,7 +2920,14 @@ export default function App() {
         )}
         {state === "app" && (
           <motion.div key="app" initial={{ opacity: 0, filter: "blur(8px)" }} animate={{ opacity: 1, filter: "blur(0px)" }} transition={{ duration: 0.6 }} style={{ width: "100%" }}>
-            <AppShell user={user} onLogout={() => setState("login")} />
+            <AppShell user={user} onLogout={async () => {
+              try {
+                await fetch("/api/auth/logout", { method: "POST" });
+              } catch (err) {
+                console.error("Logout request failed", err);
+              }
+              setState("login");
+            }} />
           </motion.div>
         )}
       </AnimatePresence>

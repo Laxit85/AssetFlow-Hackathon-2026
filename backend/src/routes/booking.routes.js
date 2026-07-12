@@ -1,22 +1,20 @@
-const express = require('express');
-const router = express.Router();
+import { Router } from "express";
+import { protect } from "../middleware/auth.js";
+import { allowRoles } from "../middleware/role.js";
+import * as controller from "../controllers/booking.controller.js";
 
-const controller = require('../controllers/booking.controller');
+const router = Router();
 
-// Assumed middleware exports - adjust names to match your actual
-// middleware/auth.js and middleware/role.js implementations.
-const { authenticate } = require('../middleware/auth');
-const { authorize } = require('../middleware/role');
-
-router.use(authenticate);
+router.use(protect);
 
 // ----- Allocation -----
-router.post('/allocation', authorize('Admin', 'AssetManager'), controller.allocateAsset);
-router.put('/allocation/return', authorize('Admin', 'AssetManager'), controller.returnAsset);
+router.post('/allocation', allowRoles('ADMIN', 'ASSET_MANAGER', 'Admin', 'AssetManager'), controller.allocateAsset);
+router.get('/allocation', controller.getAllAllocations);
+router.put('/allocation/return', allowRoles('ADMIN', 'ASSET_MANAGER', 'Admin', 'AssetManager'), controller.returnAsset);
 router.get('/allocation/asset/:assetId/history', controller.getAllocationHistory);
 router.get(
   '/allocation/overdue',
-  authorize('Admin', 'AssetManager', 'DepartmentHead'),
+  allowRoles('ADMIN', 'ASSET_MANAGER', 'DEPARTMENT_HEAD', 'Admin', 'AssetManager', 'DepartmentHead'),
   controller.getOverdueAllocations
 );
 
@@ -24,7 +22,7 @@ router.get(
 router.post('/transfer', controller.requestTransfer);
 router.put(
   '/transfer/decision',
-  authorize('Admin', 'AssetManager', 'DepartmentHead'),
+  allowRoles('ADMIN', 'ASSET_MANAGER', 'DEPARTMENT_HEAD', 'Admin', 'AssetManager', 'DepartmentHead'),
   controller.decideTransfer
 );
 
@@ -35,4 +33,4 @@ router.put('/booking/:id', controller.updateBooking);
 router.put('/booking/:id/cancel', controller.cancelBooking);
 router.get('/booking/resource/:resourceId', controller.getResourceBookings);
 
-module.exports = router;
+export default router;

@@ -1,16 +1,11 @@
-const Booking = require('../models/Booking');
-const Asset = require('../models/Asset');
-const Department = require('../models/Department');
-const Notification = require('../models/Notification');
-const ActivityLog = require('../models/ActivityLog');
-let logger;
-try {
-  logger = require('../utils/logger');
-} catch (e) {
-  logger = console;
-}
+import Booking from "../models/Booking.js";
+import Asset from "../models/Asset.js";
+import Department from "../models/Department.js";
+import Notification from "../models/Notification.js";
+import ActivityLog from "../models/ActivityLog.js";
+import { logger } from "../utils/logger.js";
 
-class AppError extends Error {
+export class AppError extends Error {
   constructor(message, statusCode = 400) {
     super(message);
     this.statusCode = statusCode;
@@ -23,7 +18,7 @@ async function logActivity({ user, action, entityType, entityId, details }) {
   try {
     await ActivityLog.create({ user, action, entityType, entityId, details });
   } catch (err) {
-    logger.error?.(`[ActivityLog] failed: ${err.message}`);
+    logger.error(`[ActivityLog] failed: ${err.message}`);
   }
 }
 
@@ -32,16 +27,14 @@ async function notify({ recipient, type, message, relatedEntity }) {
     if (!recipient) return;
     await Notification.create({ recipient, type, message, relatedEntity });
   } catch (err) {
-    logger.error?.(`[Notification] failed: ${err.message}`);
+    logger.error(`[Notification] failed: ${err.message}`);
   }
 }
 
 /**
  * Two ranges [aStart, aEnd) and [bStart, bEnd) overlap iff aStart < bEnd && bStart < aEnd.
- * This makes a booking ending at 10:00 NOT collide with one starting at 10:00
- * (matches the spec's "10:00-11:00 is fine since it starts right after" example).
  */
-async function hasOverlap(resourceId, startTime, endTime, excludeBookingId = null) {
+export async function hasOverlap(resourceId, startTime, endTime, excludeBookingId = null) {
   const query = {
     resource: resourceId,
     status: { $in: ACTIVE_BOOKING_STATUSES },
@@ -62,7 +55,7 @@ function refreshComputedStatus(booking) {
 }
 
 /** Create a booking for a shared/bookable resource, rejecting overlapping slots. */
-async function createBooking(payload, actingUser) {
+export async function createBooking(payload, actingUser) {
   const { resourceId, departmentId, purpose, startTime, endTime } = payload;
 
   if (!resourceId) throw new AppError('resourceId is required', 400);
@@ -110,25 +103,23 @@ async function createBooking(payload, actingUser) {
     action: 'BOOKING_CREATED',
     entityType: 'Booking',
     entityId: booking._id,
-    details: `Resource ${asset.assetTag || asset.name} booked ${start.toISOString()} - ${end.toISOString()}`,
+    details: `Resource ${asset.assetCode || asset.assetName} booked ${start.toISOString()} - ${end.toISOString()}`,
   });
 
   await notify({
     recipient: actingUser._id,
     type: 'Booking Confirmed',
-    message: `Your booking for ${asset.name} is confirmed.`,
+    message: `Your booking for ${asset.assetName} is confirmed.`,
     relatedEntity: booking._id,
   });
 
-  return booking.populate('resource', 'assetTag name');
+  return booking.populate('resource', 'assetCode assetName');
 }
 
 /**
  * Single PUT /booking entry point covering reschedule and cancel.
- * payload.action === 'cancel' cancels; otherwise startTime/endTime/purpose
- * fields present in the payload are treated as a reschedule.
  */
-async function updateBooking(bookingId, payload, actingUser) {
+export async function updateBooking(bookingId, payload, actingUser) {
   if (!bookingId) throw new AppError('bookingId is required', 400);
 
   const booking = await Booking.findById(bookingId);
@@ -138,7 +129,7 @@ async function updateBooking(bookingId, payload, actingUser) {
   }
 
   const isOwner = String(booking.bookedBy) === String(actingUser._id);
-  const isPrivileged = ['Admin', 'AssetManager', 'DepartmentHead'].includes(actingUser.role);
+  const isPrivileged = ['ADMIN', 'ASSET_MANAGER', 'DEPARTMENT_HEAD', 'Admin', 'AssetManager', 'DepartmentHead'].includes(actingUser.role);
   if (!isOwner && !isPrivileged) {
     throw new AppError('Not authorized to modify this booking', 403);
   }
@@ -201,7 +192,7 @@ async function updateBooking(bookingId, payload, actingUser) {
 }
 
 /** Calendar view: bookings for one resource, optionally within a date range. */
-async function getBookingsForResource(resourceId, { from, to } = {}) {
+export async function getBookingsForResource(resourceId, { from, to } = {}) {
   if (!resourceId) throw new AppError('resourceId is required', 400);
   const query = { resource: resourceId };
   if (from || to) {
@@ -214,20 +205,20 @@ async function getBookingsForResource(resourceId, { from, to } = {}) {
 }
 
 /** For a notification worker/cron: sends "starts soon" reminders once per booking. */
-async function getUpcomingBookingsForReminder(windowMinutes = 30) {
+export async function getUpcomingBookingsForReminder(windowMinutes = 30) {
   const now = new Date();
   const windowEnd = new Date(now.getTime() + windowMinutes * 60000);
   const bookings = await Booking.find({
     status: 'Upcoming',
     reminderSent: false,
     startTime: { $gte: now, $lte: windowEnd },
-  }).populate('resource', 'name assetTag');
+  }).populate('resource', 'assetName assetCode');
 
   for (const booking of bookings) {
     await notify({
       recipient: booking.bookedBy,
       type: 'Booking Reminder',
-      message: `Reminder: your booking for ${booking.resource?.name || 'a resource'} starts soon.`,
+      message: `Reminder: your booking for ${booking.resource?.assetName || 'a resource'} starts soon.`,
       relatedEntity: booking._id,
     });
     booking.reminderSent = true;
@@ -237,7 +228,7 @@ async function getUpcomingBookingsForReminder(windowMinutes = 30) {
 }
 
 /** For a cron/worker: flips Upcoming -> Ongoing -> Completed as time passes. */
-async function refreshAllBookingStatuses() {
+export async function refreshAllBookingStatuses() {
   const now = new Date();
   await Booking.updateMany(
     { status: 'Upcoming', startTime: { $lte: now }, endTime: { $gt: now } },
@@ -248,13 +239,3 @@ async function refreshAllBookingStatuses() {
     { $set: { status: 'Completed' } }
   );
 }
-
-module.exports = {
-  AppError,
-  createBooking,
-  updateBooking,
-  getBookingsForResource,
-  getUpcomingBookingsForReminder,
-  refreshAllBookingStatuses,
-  hasOverlap,
-};

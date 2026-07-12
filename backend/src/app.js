@@ -7,16 +7,20 @@ import { rateLimit } from "express-rate-limit";
 
 import { logger } from "./utils/logger.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+
+// Routes imports
 import authRoutes from "./routes/auth.routes.js";
 import dashboardRoutes from "./routes/dashboard.routes.js";
 import maintenanceRoutes from "./routes/maintenance.routes.js";
+import auditRoutes from "./routes/audit.routes.js";
+import notificationRoutes from "./routes/notification.routes.js";
+import bookingRoutes from "./routes/booking.routes.js";
 
-app.use("/api/maintenance", maintenanceRoutes);
-// Future Route Imports
-// import assetRoutes from "./routes/asset.routes.js";
-// import bookingRoutes from "./routes/booking.routes.js";
-// import maintenanceRoutes from "./routes/maintenance.routes.js";
-// import auditRoutes from "./routes/audit.routes.js";
+// Master Routes imports
+import assetRoutes from "./routes/asset.routes.js";
+import departmentRoutes from "./routes/department.routes.js";
+import employeeRoutes from "./routes/employee.routes.js";
+import categoryRoutes from "./routes/category.routes.js";
 
 const app = express();
 
@@ -24,7 +28,7 @@ const app = express();
 app.use(helmet());
 app.use(
   cors({
-    origin: process.env.CORS_ORIGIN || "http://localhost:3000",
+    origin: process.env.CLIENT_URL || process.env.CORS_ORIGIN || "http://localhost:5173",
     credentials: true,
     optionsSuccessStatus: 200,
   })
@@ -63,12 +67,16 @@ app.use(morganMiddleware);
 // 5. API Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/maintenance", maintenanceRoutes);
+app.use("/api/audits", auditRoutes);
+app.use("/api/notifications", notificationRoutes);
+app.use("/api", bookingRoutes);
 
-// Future Routes
-// app.use("/api/assets", assetRoutes);
-// app.use("/api/bookings", bookingRoutes);
-// app.use("/api/maintenance", maintenanceRoutes);
-// app.use("/api/audits", auditRoutes);
+// Master APIs
+app.use("/api/assets", assetRoutes);
+app.use("/api/departments", departmentRoutes);
+app.use("/api/employees", employeeRoutes);
+app.use("/api/categories", categoryRoutes);
 
 // 6. 404 Route Handler
 app.use((req, res, next) => {

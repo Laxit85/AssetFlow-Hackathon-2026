@@ -1,4 +1,5 @@
-const mongoose = require('mongoose');
+import mongoose from "mongoose";
+
 const { Schema } = mongoose;
 
 const bookingSchema = new Schema(
@@ -39,4 +40,4 @@ bookingSchema.pre('validate', function preValidate(next) {
   return next();
 });
 
-module.exports = mongoose.model('Booking', bookingSchema);
+export default mongoose.model('Booking', bookingSchema);

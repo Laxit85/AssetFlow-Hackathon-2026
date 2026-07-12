@@ -1,31 +1,25 @@
-const Allocation = require('../models/Allocation');
-const Asset = require('../models/Asset');
-const Department = require('../models/Department');
-const User = require('../models/User');
-const Notification = require('../models/Notification');
-const ActivityLog = require('../models/ActivityLog');
-let logger;
-try {
-  // optional - falls back to console if utils/logger.js isn't wired up yet
-  logger = require('../utils/logger');
-} catch (e) {
-  logger = console;
-}
+import Allocation from "../models/Allocation.js";
+import Asset from "../models/Asset.js";
+import Department from "../models/Department.js";
+import User from "../models/User.js";
+import Notification from "../models/Notification.js";
+import ActivityLog from "../models/ActivityLog.js";
+import { logger } from "../utils/logger.js";
 
-class AppError extends Error {
+export class AppError extends Error {
   constructor(message, statusCode = 400) {
     super(message);
     this.statusCode = statusCode;
   }
 }
 
-const ALLOCATABLE_ASSET_STATUSES = ['Available'];
+const ALLOCATABLE_ASSET_STATUSES = ['AVAILABLE', 'Available'];
 
 async function logActivity({ user, action, entityType, entityId, details }) {
   try {
     await ActivityLog.create({ user, action, entityType, entityId, details });
   } catch (err) {
-    logger.error?.(`[ActivityLog] failed: ${err.message}`);
+    logger.error(`[ActivityLog] failed: ${err.message}`);
   }
 }
 
@@ -34,24 +28,23 @@ async function notify({ recipient, type, message, relatedEntity }) {
     if (!recipient) return;
     await Notification.create({ recipient, type, message, relatedEntity });
   } catch (err) {
-    logger.error?.(`[Notification] failed: ${err.message}`);
+    logger.error(`[Notification] failed: ${err.message}`);
   }
 }
 
 /** Currently active (or transfer-pending) allocation for an asset, if any. */
-async function getActiveAllocationForAsset(assetId) {
+export async function getActiveAllocationForAsset(assetId) {
   return Allocation.findOne({ asset: assetId, status: { $in: ['Active', 'TransferPending'] } })
-    .populate('allocatedToEmployee', 'name email')
-    .populate('allocatedToDepartment', 'name');
+    .populate('allocatedToEmployee', 'firstName lastName email')
+    .populate('allocatedToDepartment', 'name departmentName');
 }
 
 /**
  * Allocate an asset to an employee or a department.
  * Blocks double-allocation: if the asset already has an active holder,
  * throws a 409 with the current holder info and a transferSuggested flag
- * so the controller/frontend can offer the "Transfer Request" action.
  */
-async function allocateAsset(payload, actingUser) {
+export async function allocateAsset(payload, actingUser) {
   const { assetId, employeeId, departmentId, expectedReturnDate } = payload;
 
   if (!assetId) throw new AppError('assetId is required', 400);
@@ -68,8 +61,8 @@ async function allocateAsset(payload, actingUser) {
   const existingActive = await getActiveAllocationForAsset(assetId);
   if (existingActive) {
     const holderName = existingActive.allocatedToEmployee
-      ? existingActive.allocatedToEmployee.name
-      : existingActive.allocatedToDepartment?.name;
+      ? `${existingActive.allocatedToEmployee.firstName} ${existingActive.allocatedToEmployee.lastName}`
+      : (existingActive.allocatedToDepartment?.departmentName || existingActive.allocatedToDepartment?.name);
     const err = new AppError(
       `Asset is currently held by ${holderName || 'another holder'}. Raise a transfer request instead.`,
       409
@@ -101,7 +94,7 @@ async function allocateAsset(payload, actingUser) {
     status: 'Active',
   });
 
-  asset.status = 'Allocated';
+  asset.status = 'ALLOCATED';
   await asset.save();
 
   await logActivity({
@@ -109,96 +102,95 @@ async function allocateAsset(payload, actingUser) {
     action: 'ASSET_ALLOCATED',
     entityType: 'Allocation',
     entityId: allocation._id,
-    details: `Asset ${asset.assetTag || asset._id} allocated`,
+    details: `Asset ${asset.assetCode || asset._id} allocated`,
   });
 
   await notify({
     recipient: employeeId || null,
     type: 'Asset Assigned',
-    message: `Asset ${asset.assetTag || asset.name} has been allocated to you.`,
+    message: `Asset ${asset.assetCode || asset.assetName} has been allocated to you.`,
     relatedEntity: allocation._id,
   });
 
   return allocation.populate([
     { path: 'asset' },
-    { path: 'allocatedToEmployee', select: 'name email' },
-    { path: 'allocatedToDepartment', select: 'name' },
+    { path: 'allocatedToEmployee', select: 'firstName lastName email' },
+    { path: 'allocatedToDepartment', select: 'departmentName name' },
   ]);
 }
 
-/** Mark an allocation returned, capture condition/notes, flip asset back to Available. */
-async function returnAsset(payload, actingUser) {
-  const { allocationId, condition, notes } = payload;
-  if (!allocationId) throw new AppError('allocationId is required', 400);
+/** Return / Check-in an asset, releasing it back to Available. */
+export async function returnAsset(payload, actingUser) {
+  const { assetId, returnCondition, returnNotes } = payload;
 
-  const allocation = await Allocation.findById(allocationId);
-  if (!allocation) throw new AppError('Allocation not found', 404);
-  if (!['Active', 'Overdue'].includes(allocation.status)) {
-    throw new AppError(`Allocation is not active (current status: ${allocation.status})`, 409);
-  }
+  if (!assetId) throw new AppError('assetId is required', 400);
 
-  allocation.actualReturnDate = new Date();
+  const asset = await Asset.findById(assetId);
+  if (!asset) throw new AppError('Asset not found', 404);
+
+  const allocation = await getActiveAllocationForAsset(assetId);
+  if (!allocation) throw new AppError('No active allocation record found for this asset', 409);
+
   allocation.status = 'Returned';
-  allocation.returnCondition = condition || null;
-  allocation.returnNotes = notes || null;
+  allocation.actualReturnDate = new Date();
+  allocation.returnCondition = returnCondition || 'Good';
+  allocation.returnNotes = returnNotes || '';
   allocation.approvedReturnBy = actingUser._id;
   await allocation.save();
 
-  const asset = await Asset.findById(allocation.asset);
-  if (asset) {
-    asset.status = 'Available';
-    if (condition) asset.condition = condition;
-    await asset.save();
+  asset.status = 'AVAILABLE';
+  if (returnCondition === 'Damaged') {
+    asset.status = 'UNDER_MAINTENANCE';
   }
+  await asset.save();
 
   await logActivity({
     user: actingUser._id,
     action: 'ASSET_RETURNED',
     entityType: 'Allocation',
     entityId: allocation._id,
-    details: `Asset returned, condition: ${condition || 'not specified'}`,
+    details: `Returned in ${allocation.returnCondition} condition`,
   });
 
   await notify({
-    recipient: allocation.allocatedBy,
-    type: 'Asset Assigned',
-    message: `Return recorded for allocation ${allocation._id}.`,
+    recipient: allocation.allocatedToEmployee,
+    type: 'Asset Returned',
+    message: `Asset ${asset.assetName} has been returned.`,
     relatedEntity: allocation._id,
   });
 
   return allocation;
 }
 
-/** Employee/holder raises a transfer request against their active allocation. */
-async function requestTransfer(payload, actingUser) {
-  const { allocationId, toEmployeeId, toDepartmentId, reason } = payload;
-  if (!allocationId) throw new AppError('allocationId is required', 400);
+/** Initiate an asset transfer request from the current allocation. */
+export async function requestTransfer(payload, actingUser) {
+  const { assetId, requestedToEmployeeId, requestedToDepartmentId, reason } = payload;
 
-  if (!toEmployeeId && !toDepartmentId) {
-    throw new AppError('Provide either toEmployeeId or toDepartmentId for the transfer', 400);
+  if (!assetId) throw new AppError('assetId is required', 400);
+  if (!requestedToEmployeeId && !requestedToDepartmentId) {
+    throw new AppError('Specify target employee or department for transfer', 400);
   }
-  if (toEmployeeId && toDepartmentId) {
-    throw new AppError('Transfer to either an employee or a department, not both', 400);
-  }
-
-  const allocation = await Allocation.findById(allocationId);
-  if (!allocation) throw new AppError('Allocation not found', 404);
-  if (allocation.status !== 'Active') {
-    throw new AppError(`Only active allocations can be transferred (current status: ${allocation.status})`, 409);
-  }
-  if (allocation.transferRequest && allocation.transferRequest.status === 'Pending') {
-    throw new AppError('A transfer request is already pending for this allocation', 409);
+  if (requestedToEmployeeId && requestedToDepartmentId) {
+    throw new AppError('Specify either target employee or department, not both', 400);
   }
 
+  const allocation = await getActiveAllocationForAsset(assetId);
+  if (!allocation) throw new AppError('No active allocation found for this asset', 409);
+
+  if (allocation.status === 'TransferPending') {
+    throw new AppError('A transfer request is already pending for this asset', 409);
+  }
+
+  allocation.status = 'TransferPending';
   allocation.transferRequest = {
     requestedBy: actingUser._id,
-    requestedToEmployee: toEmployeeId || null,
-    requestedToDepartment: toDepartmentId || null,
+    requestedToEmployee: requestedToEmployeeId || null,
+    requestedToDepartment: requestedToDepartmentId || null,
     reason: reason || '',
     status: 'Pending',
     requestedAt: new Date(),
   };
-  allocation.status = 'TransferPending';
+
   await allocation.save();
 
   await logActivity({
@@ -212,13 +204,9 @@ async function requestTransfer(payload, actingUser) {
   return allocation;
 }
 
-/**
- * Asset Manager / Department Head approves or rejects a pending transfer.
- * On approval: closes the current allocation (status Returned) and creates a
- * brand new Allocation for the new holder, keeping full history via supersededBy.
- */
-async function decideTransfer(payload, actingUser) {
-  const { allocationId, decision, decisionNote } = payload; // decision: 'Approved' | 'Rejected'
+/** Decide on a pending transfer (Approve or Reject). */
+export async function decideTransfer(payload, actingUser) {
+  const { allocationId, decision, decisionNote } = payload;
 
   if (!['Approved', 'Rejected'].includes(decision)) {
     throw new AppError('decision must be "Approved" or "Rejected"', 400);
@@ -282,31 +270,31 @@ async function decideTransfer(payload, actingUser) {
 
   return newAllocation.populate([
     { path: 'asset' },
-    { path: 'allocatedToEmployee', select: 'name email' },
-    { path: 'allocatedToDepartment', select: 'name' },
+    { path: 'allocatedToEmployee', select: 'firstName lastName email' },
+    { path: 'allocatedToDepartment', select: 'departmentName name' },
   ]);
 }
 
 /** Full allocation history for an asset (Screen 4: per-asset history). */
-async function getAllocationHistory(assetId) {
+export async function getAllocationHistory(assetId) {
   if (!assetId) throw new AppError('assetId is required', 400);
   return Allocation.find({ asset: assetId })
     .sort({ createdAt: -1 })
-    .populate('allocatedToEmployee', 'name email')
-    .populate('allocatedToDepartment', 'name')
-    .populate('allocatedBy', 'name email');
+    .populate('allocatedToEmployee', 'firstName lastName email')
+    .populate('allocatedToDepartment', 'departmentName name')
+    .populate('allocatedBy', 'firstName lastName email');
 }
 
 /** Active allocations past their expected return date; flips them to Overdue. */
-async function getOverdueAllocations() {
+export async function getOverdueAllocations() {
   const now = new Date();
   const overdue = await Allocation.find({
     status: 'Active',
     expectedReturnDate: { $ne: null, $lt: now },
   })
-    .populate('asset', 'assetTag name')
-    .populate('allocatedToEmployee', 'name email')
-    .populate('allocatedToDepartment', 'name');
+    .populate('asset', 'assetCode assetName')
+    .populate('allocatedToEmployee', 'firstName lastName email')
+    .populate('allocatedToDepartment', 'departmentName name');
 
   if (overdue.length) {
     await Allocation.updateMany(
@@ -317,13 +305,12 @@ async function getOverdueAllocations() {
   return overdue;
 }
 
-module.exports = {
-  AppError,
-  allocateAsset,
-  returnAsset,
-  requestTransfer,
-  decideTransfer,
-  getAllocationHistory,
-  getOverdueAllocations,
-  getActiveAllocationForAsset,
-};
+/** Get all allocations across the organization. */
+export async function getAllAllocations() {
+  return Allocation.find()
+    .sort({ createdAt: -1 })
+    .populate("asset")
+    .populate("allocatedToEmployee", "firstName lastName email")
+    .populate("allocatedToDepartment", "departmentName name")
+    .populate("allocatedBy", "firstName lastName email");
+}

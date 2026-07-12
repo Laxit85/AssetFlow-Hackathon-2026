@@ -1,6 +1,6 @@
 import express from "express";
 import * as auditController from "../controllers/audit.controller.js";
-import { protect } from "../middlewares/auth.middleware.js";
+import { protect } from "../middleware/auth.js";
 
 /**
  * NOTE ON ASSUMPTIONS

@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
-import AuditCycle from "../models/auditCycle.model.js";
-import AuditItem from "../models/auditItem.model.js";
-import ActivityLog from "../models/activityLog.model.js";
+import AuditCycle from "../models/AuditCycle.js";
+import AuditItem from "../models/AuditItem.js";
+import ActivityLog from "../models/ActivityLog.js";
 
 /**
  * NOTE ON ASSUMPTIONS
